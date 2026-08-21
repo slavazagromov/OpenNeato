@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.24.0-nogo.2
+
+### Added
+
+* Passive no-go observer entities and Home Assistant events, backed by the
+  matching robot firmware endpoints.
+* A map-based no-go line editor in the replay card. Geometry is translated
+  between Philou95's accumulated-map frame and the selected session's raw
+  robot frame on every load/save.
+
+### Fixed
+
+* Included Philou95's post-v1.23.1 replay-card fixes for dashboard grid
+  collapse, duplicate resource loading, and transparent-plan centering.
+
 ## 1.23.0
 
 ### Added
@@ -801,4 +816,3 @@ defined in strings.json (dead code). All now properly defined
 ## 1.0.0
 
 * Initial Home Assistant custom integration for OpenNeato
-

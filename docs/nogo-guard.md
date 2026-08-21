@@ -2,7 +2,7 @@
 
 This branch is based on the combined Philou95 v1.23.1 tree, so the robot firmware,
 embedded web UI, and Home Assistant custom integration ship from one compatible
-source revision. The HA component version is `1.24.0-nogo.1`.
+source revision. The HA component version is `1.24.0-nogo.2`.
 
 It introduces the first hardware-safe milestone toward local no-go lines.
 It observes the dock-relative pose already collected by cleaning history and reports
@@ -50,6 +50,18 @@ with the robot's existing coordinator and exposes:
 The events contain the robot serial, host, last X/Y pose, closest distance, and
 reference session. They are intended for HA notification automations without
 adding another polling bridge.
+
+The bundled replay card also has a **No-go lines** editor. Select a completed
+cleaning, open the editor, tap/click points along each barrier, choose **New
+line** between barriers, switch the observer on, and save. The card draws in
+the accumulated map frame; Home Assistant converts the points to the selected
+reference session's robot frame before writing them to firmware. Existing
+geometry is converted back to the map frame when the card loads.
+
+The editor intentionally says **Observer only**. A future run can still be
+re-zeroed or re-aligned differently from the reference run. The near/breach
+events are how we measure that drift across repeated dock-started mornings
+before allowing any firmware branch to issue an automatic stop.
 
 ## Validation stages
 

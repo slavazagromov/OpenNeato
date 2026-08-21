@@ -11,7 +11,7 @@
  * (openneato/sessions, openneato/session) — the browser only draws.
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.1.0-nogo-observe";
 
 // Breathing room around the fitted map, in CSS pixels. Kept small: the fit
 // already leaves slack wherever the run is not the shape of the card, and
@@ -37,7 +37,9 @@ const FILL_MIN_HEIGHT = 220;
 // must be to count as the one holding the free space. Bounded so an
 // unfamiliar dashboard layout cannot send it restyling its way to <body>.
 const STRETCH_MAX_HOPS = 8;
-const STRETCH_SLACK_PX = 40;
+// Frames to keep re-checking the stretch after connecting. 30 frames is
+// about half a second at 60Hz -- enough for a dashboard to finish painting.
+const STRETCH_RETRY_FRAMES = 30;
 
 const LIVE_REFRESH_MS = 3000;
 
@@ -239,6 +241,23 @@ class OpenNeatoReplayCard extends HTMLElement {
         this._floorplanImg = null;
         this._floorplanKey = null;
 
+        // No-go geometry is edited in the accumulated map frame. The HA
+        // websocket converts it to/from the selected reference session's raw
+        // robot frame when loading and saving. This first release deliberately
+        // observes and reports only; it never sends a stop or wheel command.
+        this._nogoConfig = {
+            enabled: false,
+            referenceSession: "",
+            warningDistance: 0.2,
+            noGoLines: [],
+            mode: "observe",
+        };
+        this._nogoSupported = null;
+        this._nogoEditing = false;
+        this._nogoSaving = false;
+        this._nogoDraft = [];
+        this._nogoCurrent = [];
+
         // Playback state. `_time` is the source of truth and is mutated by
         // the rAF loop directly — putting it in a re-render cycle is what
         // makes this kind of player stutter.
@@ -305,33 +324,62 @@ class OpenNeatoReplayCard extends HTMLElement {
     // "one time in two": on a warm cache the page paints before the timer, on
     // a cold one after. So the chain is (re)built from a ResizeObserver on the
     // column instead of from a clock -- see _observeStretch.
+    // ⚠ Never restyle these. The walk below sets `display: flex` as it climbs,
+    // and `flex` overrides `grid` -- so reaching the dashboard's own layout
+    // container replaces its `grid-template-columns` with a single flex column
+    // and collapses the whole page into one column. That is not theoretical:
+    // it happened on this dashboard, and it was the real cause of all three
+    // reported symptoms -- the collapsed layout, the card coming up small
+    // (different ancestors in the collapsed layout), and the config errors.
+    // The hop limit alone did not protect it, because the stop-on-slack test
+    // cannot fire while the page is still laying out and every height is 0.
+    _isLayoutHost(node) {
+        const tag = node.tagName ? node.tagName.toLowerCase() : "";
+        if (tag === "grid-layout" || tag === "masonry-layout" || tag.startsWith("hui-view")) {
+            return true;
+        }
+        // Anything already laying its children out as a grid owns its own
+        // geometry -- the dashboard's columns live there.
+        const display = getComputedStyle(node).display;
+        return display === "grid" || display === "inline-grid";
+    }
+
     _stretchWrapper() {
         const up = (n) => n.parentElement || (n.parentNode && n.parentNode.host) || null;
-        const own = this.getBoundingClientRect().height;
         let child = this;
         let node = up(this);
 
+        // Walk to the layout host and flex everything strictly below it. The
+        // stopping rule is *structural*, not a height comparison, and that is
+        // the point: the old version stopped at "the first ancestor taller
+        // than the card", which cannot be evaluated until the dashboard has
+        // painted. Before that every height is 0, the test never fires, and
+        // the card was left at its minimum until some later resize happened to
+        // re-trigger it -- seconds later, or never. That was the whole of the
+        // "one refresh in two".
+        //
+        // The chain between this card and the layout host is always ours to
+        // flex and always the right chain, whether or not anything has been
+        // measured yet.
         for (let hop = 0; node && hop < STRETCH_MAX_HOPS; hop++) {
             child.style.flex = "1 1 auto";
             child.style.minHeight = "0";
+
+            if (this._isLayoutHost(node)) {
+                // The dashboard's own column. Its geometry is not ours to
+                // touch -- turning it into a flex column is what collapsed the
+                // page into one column. Stop here, and watch it so a later
+                // resize still re-runs this.
+                this._observeStretch(node);
+                return;
+            }
+
             node.style.display = "flex";
             node.style.flexDirection = "column";
             node.style.minHeight = "0";
 
-            const next = up(node);
-            // Stop once the next ancestor is clearly taller than the card:
-            // that is the one holding the free space, and everything below it
-            // is now a flex column that can claim it. Going further would
-            // restyle unrelated dashboard structure.
-            if (next && next.getBoundingClientRect().height > own + STRETCH_SLACK_PX) {
-                node.style.flex = "1 1 auto";
-                next.style.display = "flex";
-                next.style.flexDirection = "column";
-                this._observeStretch(next);
-                return;
-            }
             child = node;
-            node = next;
+            node = up(node);
         }
         // Nothing had slack yet -- the columns have not rendered. Watch the
         // furthest ancestor we reached: when the layout settles it will
@@ -363,6 +411,24 @@ class OpenNeatoReplayCard extends HTMLElement {
         this._stretchObserver.observe(target);
     }
 
+    // The observer covers a layout that settles *after* we look. It cannot
+    // cover one that settled *before*: nothing resizes afterwards, so nothing
+    // fires, and the card sits at its minimum forever. That is the other half
+    // of the "one refresh in two" -- which half you get depends on whether the
+    // dashboard painted before or after the card connected.
+    //
+    // So retry over a bounded run of frames as well, and stop the moment the
+    // stage is taller than its minimum. A card that stretched on the first
+    // attempt costs one extra frame check and nothing more.
+    _ensureStretched(framesLeft = STRETCH_RETRY_FRAMES) {
+        if (!this._config || this._config.height !== "fill") return;
+        const stage = this._stage;
+        if (stage && stage.getBoundingClientRect().height > FILL_MIN_HEIGHT + 1) return;
+        this._stretchWrapper();
+        if (framesLeft <= 0) return;
+        requestAnimationFrame(() => this._ensureStretched(framesLeft - 1));
+    }
+
     getCardSize() {
         const h = Number(this._config.height);
         return Math.ceil((Number.isFinite(h) ? h : DEFAULTS.height) / 50) + 1;
@@ -384,10 +450,10 @@ class OpenNeatoReplayCard extends HTMLElement {
         // not final yet -- measuring too early is what made the card come up at
         // its minimum on some loads and not others.
         if (this._config && this._config.height === "fill") {
-            this._stretchWrapper();
-            // A first pass now, and a backstop after the frame. Everything
-            // beyond that is driven by the ResizeObserver rather than a timer.
-            requestAnimationFrame(() => this._stretchWrapper());
+            // One pass now, then keep checking for a bounded run of frames.
+            // The ResizeObserver handles a layout that settles later; this
+            // handles one that settled before we got here.
+            this._ensureStretched();
         }
         if (this._canvas) this._observeResize();
         this._dirty = true;
@@ -605,6 +671,37 @@ class OpenNeatoReplayCard extends HTMLElement {
                     background: var(--primary-text-color);
                     border: 2px solid var(--card-background-color);
                 }
+                .nogo-controls {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 0 16px 12px;
+                    min-height: 28px;
+                    flex-wrap: wrap;
+                }
+                .nogo-controls [hidden] { display: none !important; }
+                button.nogo-action {
+                    border-radius: 8px;
+                    border: 1px solid var(--divider-color);
+                    padding: 5px 9px;
+                    font: inherit;
+                    font-size: 0.75rem;
+                    line-height: 1.2;
+                    color: var(--primary-text-color);
+                }
+                button.nogo-primary {
+                    border-color: var(--primary-color);
+                    color: var(--primary-color);
+                }
+                button.nogo-enabled.active {
+                    border-color: var(--error-color, #db4437);
+                    color: var(--error-color, #db4437);
+                }
+                .nogo-note {
+                    color: var(--secondary-text-color);
+                    font-size: 0.72rem;
+                }
+                canvas.nogo-editing { cursor: crosshair; }
             </style>
             <ha-card>
                 <div class="head">
@@ -631,6 +728,17 @@ class OpenNeatoReplayCard extends HTMLElement {
                     <input type="range" class="scrub" min="0" max="1" step="0.05" value="0" disabled>
                     <span class="clock total">0:00</span>
                 </div>
+                <div class="nogo-controls">
+                    <button class="nogo-action nogo-open" title="Draw passive no-go observer lines">
+                        No-go lines
+                    </button>
+                    <button class="nogo-action nogo-enabled" hidden>Observer off</button>
+                    <button class="nogo-action nogo-new" hidden>New line</button>
+                    <button class="nogo-action nogo-undo" hidden>Undo</button>
+                    <button class="nogo-action nogo-primary nogo-save" hidden>Save</button>
+                    <button class="nogo-action nogo-cancel" hidden>Cancel</button>
+                    <span class="nogo-note">Observer only — no automatic stop</span>
+                </div>
             </ha-card>
         `;
 
@@ -648,6 +756,13 @@ class OpenNeatoReplayCard extends HTMLElement {
         this._elapsedEl = root.querySelector(".elapsed");
         this._totalEl = root.querySelector(".total");
         this._scrub = root.querySelector(".scrub");
+        this._nogoOpenBtn = root.querySelector(".nogo-open");
+        this._nogoEnabledBtn = root.querySelector(".nogo-enabled");
+        this._nogoNewBtn = root.querySelector(".nogo-new");
+        this._nogoUndoBtn = root.querySelector(".nogo-undo");
+        this._nogoSaveBtn = root.querySelector(".nogo-save");
+        this._nogoCancelBtn = root.querySelector(".nogo-cancel");
+        this._nogoNote = root.querySelector(".nogo-note");
 
         // `height: fill` lets the map grow to whatever room the column gives
         // it, instead of pinning a pixel count that has to be re-guessed every
@@ -677,6 +792,12 @@ class OpenNeatoReplayCard extends HTMLElement {
         this._playBtn.addEventListener("click", () => this._togglePlay());
         this._restartBtn.addEventListener("click", () => this._restart());
         this._speedBtn.addEventListener("click", () => this._cycleSpeed());
+        this._nogoOpenBtn.addEventListener("click", () => this._beginNoGoEdit());
+        this._nogoEnabledBtn.addEventListener("click", () => this._toggleNoGoEnabled());
+        this._nogoNewBtn.addEventListener("click", () => this._finishNoGoLine());
+        this._nogoUndoBtn.addEventListener("click", () => this._undoNoGoPoint());
+        this._nogoSaveBtn.addEventListener("click", () => this._saveNoGo());
+        this._nogoCancelBtn.addEventListener("click", () => this._cancelNoGoEdit());
         this._showSpeed();
         this._scrub.addEventListener("input", () => {
             this._pause();
@@ -702,11 +823,17 @@ class OpenNeatoReplayCard extends HTMLElement {
         const canvas = this._canvas;
 
         canvas.addEventListener("pointerdown", (e) => {
+            if (this._nogoEditing) {
+                canvas.setPointerCapture(e.pointerId);
+                this._nogoPointer = { id: e.pointerId, x: e.clientX, y: e.clientY };
+                return;
+            }
             canvas.setPointerCapture(e.pointerId);
             this._drag = { x: e.clientX, y: e.clientY, panX: this._tf.panX, panY: this._tf.panY };
             canvas.classList.add("dragging");
         });
         canvas.addEventListener("pointermove", (e) => {
+            if (this._nogoEditing) return;
             if (!this._drag) return;
             // The pan is applied inside the rotation, so a screen-space drag
             // has to be turned back into that frame first. Miss this and the
@@ -719,6 +846,19 @@ class OpenNeatoReplayCard extends HTMLElement {
             this._scheduleRender();
         });
         const endDrag = (e) => {
+            if (this._nogoEditing && this._nogoPointer) {
+                const pointer = this._nogoPointer;
+                this._nogoPointer = null;
+                if (canvas.hasPointerCapture(pointer.id)) canvas.releasePointerCapture(pointer.id);
+                // Ignore a gesture that moved: taps add points, drags do not.
+                if (
+                    e.type === "pointerup" &&
+                    Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) < 6
+                ) {
+                    this._addNoGoPoint(e.clientX, e.clientY);
+                }
+                return;
+            }
             if (!this._drag) return;
             this._drag = null;
             canvas.classList.remove("dragging");
@@ -760,6 +900,10 @@ class OpenNeatoReplayCard extends HTMLElement {
         );
 
         canvas.addEventListener("dblclick", () => {
+            if (this._nogoEditing) {
+                this._finishNoGoLine();
+                return;
+            }
             this._tf = { panX: 0, panY: 0, zoom: 1 };
             this._dirty = true;
             this._scheduleRender();
@@ -775,6 +919,9 @@ class OpenNeatoReplayCard extends HTMLElement {
                 ...(this._config.entry_id ? { entry_id: this._config.entry_id } : {}),
             });
             this._entryId = res.entry_id;
+            // No-go support is optional while the two robots are upgraded one
+            // at a time; never hold replay loading behind that extra request.
+            void this._loadNoGo();
             // The run in progress is included, so the map can be watched as it
             // is drawn rather than only after the robot finishes. The backend
             // already handled a growing session -- it just declines to cache
@@ -802,6 +949,184 @@ class OpenNeatoReplayCard extends HTMLElement {
         } catch (err) {
             this._fail(`Could not list sessions: ${err.message || err}`);
         }
+    }
+
+    async _loadNoGo() {
+        try {
+            const config = await this._hass.callWS({
+                type: "openneato/nogo_get",
+                ...(this._entryId ? { entry_id: this._entryId } : {}),
+            });
+            this._nogoConfig = {
+                enabled: Boolean(config.enabled),
+                referenceSession: config.referenceSession || "",
+                warningDistance: Number(config.warningDistance) || 0.2,
+                noGoLines: Array.isArray(config.noGoLines) ? config.noGoLines : [],
+                mode: config.mode || "observe",
+            };
+            this._nogoSupported = true;
+            this._nogoOpenBtn.disabled = false;
+            this._nogoOpenBtn.textContent = "No-go lines";
+            this._nogoNote.textContent = this._nogoConfig.enabled
+                ? `${this._nogoConfig.noGoLines.length} line(s) armed for observation`
+                : "Observer only — no automatic stop";
+            this._dirty = true;
+            this._scheduleRender();
+        } catch (_err) {
+            // Updating HA before the robot is intentional and supported. Keep
+            // replay working, but make it clear that editing needs the matching
+            // combined firmware rather than turning a 404 into a broken card.
+            this._nogoSupported = false;
+            this._nogoOpenBtn.disabled = true;
+            this._nogoOpenBtn.textContent = "No-go unavailable";
+            this._nogoNote.textContent = "Install combined robot firmware to enable";
+        }
+    }
+
+    _beginNoGoEdit() {
+        if (!this._nogoSupported || !this._session || this._nogoSaving) return;
+        this._pause();
+        this._nogoEditing = true;
+        this._nogoDraft = (this._nogoConfig.noGoLines || []).map((line) =>
+            line.map((point) => ({ x: Number(point.x), y: Number(point.y) })),
+        );
+        this._nogoDraftEnabled = this._nogoConfig.enabled;
+        this._nogoCurrent = [];
+        this._canvas.classList.add("nogo-editing");
+        this._setNoGoEditUi(true);
+        this._nogoNote.textContent = "Tap the map for points; use New line between barriers";
+        this._dirty = true;
+        this._scheduleRender();
+    }
+
+    _setNoGoEditUi(editing) {
+        this._nogoOpenBtn.hidden = editing;
+        for (const button of [
+            this._nogoEnabledBtn,
+            this._nogoNewBtn,
+            this._nogoUndoBtn,
+            this._nogoSaveBtn,
+            this._nogoCancelBtn,
+        ]) {
+            button.hidden = !editing;
+        }
+        this._showNoGoEnabled();
+    }
+
+    _showNoGoEnabled() {
+        if (!this._nogoEnabledBtn) return;
+        const enabled = this._nogoEditing ? this._nogoDraftEnabled : this._nogoConfig.enabled;
+        this._nogoEnabledBtn.textContent = enabled
+            ? "Observer on"
+            : "Observer off";
+        this._nogoEnabledBtn.classList.toggle("active", enabled);
+    }
+
+    _toggleNoGoEnabled() {
+        if (!this._nogoEditing) return;
+        this._nogoDraftEnabled = !this._nogoDraftEnabled;
+        this._showNoGoEnabled();
+    }
+
+    _addNoGoPoint(clientX, clientY) {
+        if (!this._nogoEditing || !this._lastProjection || !this._lastViewMatrix) return;
+        const rect = this._canvas.getBoundingClientRect();
+        const dpr = this._lastDpr || 1;
+        const device = new DOMPoint((clientX - rect.left) * dpr, (clientY - rect.top) * dpr);
+        const projected = this._lastViewMatrix.inverse().transformPoint(device);
+        const point = {
+            x: Number(this._lastProjection.fromX(projected.x).toFixed(3)),
+            y: Number(this._lastProjection.fromY(projected.y).toFixed(3)),
+        };
+        this._nogoCurrent.push(point);
+        this._nogoNote.textContent = `${this._nogoDraft.length} saved line(s), ${this._nogoCurrent.length} point(s) in current line`;
+        this._dirty = true;
+        this._scheduleRender();
+    }
+
+    _finishNoGoLine() {
+        if (!this._nogoEditing) return;
+        if (this._nogoCurrent.length >= 2) {
+            this._nogoDraft.push(this._nogoCurrent);
+            this._nogoCurrent = [];
+            this._nogoNote.textContent = `${this._nogoDraft.length} line(s); tap to start another`;
+        } else if (this._nogoCurrent.length === 1) {
+            this._nogoNote.textContent = "A line needs at least two points";
+        }
+        this._dirty = true;
+        this._scheduleRender();
+    }
+
+    _undoNoGoPoint() {
+        if (!this._nogoEditing) return;
+        if (this._nogoCurrent.length) this._nogoCurrent.pop();
+        else if (this._nogoDraft.length) this._nogoDraft.pop();
+        this._nogoNote.textContent = `${this._nogoDraft.length} line(s), ${this._nogoCurrent.length} current point(s)`;
+        this._dirty = true;
+        this._scheduleRender();
+    }
+
+    async _saveNoGo() {
+        if (!this._nogoEditing || this._nogoSaving) return;
+        if (this._nogoCurrent.length === 1) {
+            this._nogoNote.textContent = "Finish or undo the one-point line before saving";
+            return;
+        }
+        if (this._nogoCurrent.length >= 2) this._nogoDraft.push(this._nogoCurrent);
+        if (this._nogoDraftEnabled && this._nogoDraft.length === 0) {
+            this._nogoNote.textContent = "Draw a line or switch the observer off";
+            return;
+        }
+
+        this._nogoSaving = true;
+        this._nogoSaveBtn.disabled = true;
+        this._nogoNote.textContent = "Saving to robot…";
+        try {
+            const saved = await this._hass.callWS({
+                type: "openneato/nogo_set",
+                ...(this._entryId ? { entry_id: this._entryId } : {}),
+                enabled: this._nogoDraftEnabled,
+                reference_session: this._selectedName,
+                warning_distance: this._nogoConfig.warningDistance,
+                lines: this._nogoDraft,
+            });
+            this._nogoConfig = {
+                enabled: Boolean(saved.enabled),
+                referenceSession: saved.referenceSession,
+                warningDistance: Number(saved.warningDistance) || 0.2,
+                noGoLines: saved.noGoLines || [],
+                mode: saved.mode || "observe",
+            };
+            this._finishNoGoEdit();
+            this._nogoNote.textContent = this._nogoConfig.enabled
+                ? `${this._nogoConfig.noGoLines.length} line(s) armed for observation`
+                : "No-go observer saved off";
+        } catch (err) {
+            this._nogoNote.textContent = `Could not save: ${err.message || err}`;
+        } finally {
+            this._nogoSaving = false;
+            this._nogoSaveBtn.disabled = false;
+            this._dirty = true;
+            this._scheduleRender();
+        }
+    }
+
+    _finishNoGoEdit() {
+        this._nogoEditing = false;
+        this._nogoDraft = [];
+        this._nogoCurrent = [];
+        this._canvas.classList.remove("nogo-editing");
+        this._setNoGoEditUi(false);
+    }
+
+    _cancelNoGoEdit() {
+        if (!this._nogoEditing || this._nogoSaving) return;
+        this._finishNoGoEdit();
+        this._nogoNote.textContent = this._nogoConfig.enabled
+            ? `${this._nogoConfig.noGoLines.length} line(s) armed for observation`
+            : "Observer only — no automatic stop";
+        this._dirty = true;
+        this._scheduleRender();
     }
 
     /* While the selected session is the one the robot is still writing, pull
@@ -1169,9 +1494,19 @@ class OpenNeatoReplayCard extends HTMLElement {
         const W = img.width;
         const H = img.height;
         const at = (x, y) => (y * W + x) * 4;
-        // Background = median-ish of the four corners, which are margin on
-        // every plan export I've seen.
         const corners = [at(0, 0), at(W - 1, 0), at(0, H - 1), at(W - 1, H - 1)];
+
+        // A plan exported with an alpha channel needs no colour guessing: the
+        // content *is* the opaque part. Guessing from the corners is actively
+        // wrong there, because a fully transparent pixel still reports its RGB
+        // as (0, 0, 0) -- which is exactly the colour the walls are drawn in.
+        // The estimate then says "background is black", every wall matches it,
+        // and the content box comes back empty. Our own generated plans are
+        // black on transparent, so this was every one of them.
+        const transparentBg = corners.every((o) => data[o + 3] < 8);
+
+        // Opaque exports keep the old heuristic: background = median-ish of the
+        // four corners, which are margin on every such plan I've seen.
         const bg = [0, 1, 2].map((ch) => {
             const v = corners.map((o) => data[o + ch]).sort((a, b) => a - b);
             return (v[1] + v[2]) / 2;
@@ -1188,6 +1523,7 @@ class OpenNeatoReplayCard extends HTMLElement {
                 const o = at(x, y);
                 if (data[o + 3] < 8) continue; // transparent margin, if any
                 if (
+                    !transparentBg &&
                     Math.abs(data[o] - bg[0]) <= TOL &&
                     Math.abs(data[o + 1] - bg[1]) <= TOL &&
                     Math.abs(data[o + 2] - bg[2]) <= TOL
@@ -1279,6 +1615,8 @@ class OpenNeatoReplayCard extends HTMLElement {
             scale,
             toX: (wx) => offX + (wx - bounds.minX) * scale,
             toY: (wy) => offY + (bounds.maxY - wy) * scale,
+            fromX: (px) => bounds.minX + (px - offX) / scale,
+            fromY: (py) => bounds.maxY - (py - offY) / scale,
         };
     }
 
@@ -1422,6 +1760,9 @@ class OpenNeatoReplayCard extends HTMLElement {
 
         this._applyTransform(ctx, dpr, displayW, displayH);
         const proj = this._projection(displayW, displayH, bounds);
+        this._lastProjection = proj;
+        this._lastViewMatrix = ctx.getTransform();
+        this._lastDpr = dpr;
         const tNow = this._time;
 
         // Grid first, and square to the screen rather than to the world: once
@@ -1449,11 +1790,48 @@ class OpenNeatoReplayCard extends HTMLElement {
         this._drawFloorplan(ctx, proj, dpr, displayW, displayH);
 
         this._applyTransform(ctx, dpr, displayW, displayH);
+        this._drawNoGoLines(ctx, proj);
         const head = session.interpolate(tNow);
         this._drawMarkers(ctx, proj, head, isDark);
         this._drawRecharges(ctx, proj, tNow, isDark);
 
         this._syncControls();
+    }
+
+    _drawNoGoLines(ctx, proj) {
+        const lines = this._nogoEditing
+            ? [...this._nogoDraft, this._nogoCurrent]
+            : this._nogoConfig.noGoLines || [];
+        if (!lines.length) return;
+
+        ctx.save();
+        ctx.strokeStyle = "rgba(255, 59, 48, 0.95)";
+        ctx.fillStyle = "rgba(255, 59, 48, 0.95)";
+        ctx.lineWidth = Math.max(2, 3 / this._tf.zoom);
+        ctx.setLineDash(this._nogoEditing ? [8 / this._tf.zoom, 5 / this._tf.zoom] : []);
+        for (const line of lines) {
+            if (!Array.isArray(line) || line.length === 0) continue;
+            ctx.beginPath();
+            ctx.moveTo(proj.toX(line[0].x), proj.toY(line[0].y));
+            for (let i = 1; i < line.length; i++) {
+                ctx.lineTo(proj.toX(line[i].x), proj.toY(line[i].y));
+            }
+            if (line.length >= 2) ctx.stroke();
+            if (this._nogoEditing) {
+                for (const point of line) {
+                    ctx.beginPath();
+                    ctx.arc(
+                        proj.toX(point.x),
+                        proj.toY(point.y),
+                        Math.max(3, 4 / this._tf.zoom),
+                        0,
+                        Math.PI * 2,
+                    );
+                    ctx.fill();
+                }
+            }
+        }
+        ctx.restore();
     }
 
     // Everywhere the robot has been, at a constant faint tone.
@@ -2053,18 +2431,41 @@ class OpenNeatoReplayCard extends HTMLElement {
     }
 }
 
-customElements.define("openneato-replay-card", OpenNeatoReplayCard);
+// This module can be evaluated more than once: the integration injects it with
+// add_extra_js_url, and it is also declared as a Lovelace resource because
+// add_extra_js_url on its own loses the race against the dashboard's first
+// render. So the registration has to survive being run twice.
+//
+// Always *attempt* the define and swallow the duplicate-name error, rather
+// than skipping the define when customElements.get() reports the name is
+// taken. Guarding on get() was observed leaving the element unregistered
+// while the rest of this block had plainly run -- and a card that is loaded
+// but not registered is exactly the "Custom element doesn't exist" error the
+// dashboard shows. Attempting unconditionally has no such failure mode: the
+// only way to end up unregistered is for define() itself to throw, which it
+// only does when the name is already taken.
+try {
+    customElements.define("openneato-replay-card", OpenNeatoReplayCard);
+    console.info(
+        `%c OPENNEATO-REPLAY-CARD %c ${CARD_VERSION} `,
+        "color: #1e1e22; background: #34c759; font-weight: 700;",
+        "color: #34c759; background: #1e1e22;",
+    );
+} catch (err) {
+    // Already registered by the other loader. Harmless -- but it must not
+    // propagate, because an exception at module top level aborts the module
+    // and takes every other card in the view down with it.
+    console.debug("openneato-replay-card already registered", err);
+}
 
+// Separate from the define: the picker entry has its own idempotence, and
+// tying it to the define left it missing whenever the define was skipped.
 window.customCards = window.customCards || [];
-window.customCards.push({
-    type: "openneato-replay-card",
-    name: "OpenNeato Replay",
-    description: "Smooth canvas replay of a cleaning session, with scrubber and playback controls.",
-    preview: false,
-});
-
-console.info(
-    `%c OPENNEATO-REPLAY-CARD %c ${CARD_VERSION} `,
-    "color: #1e1e22; background: #34c759; font-weight: 700;",
-    "color: #34c759; background: #1e1e22;",
-);
+if (!window.customCards.some((c) => c && c.type === "openneato-replay-card")) {
+    window.customCards.push({
+        type: "openneato-replay-card",
+        name: "OpenNeato Replay",
+        description: "Smooth canvas replay of a cleaning session, with scrubber and playback controls.",
+        preview: false,
+    });
+}

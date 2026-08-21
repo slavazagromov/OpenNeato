@@ -1,14 +1,15 @@
-"""WebSocket API backing the interactive replay card.
+"""WebSocket API backing replay, session management, and no-go editing.
 
-Two commands: one to list cleaning sessions, one to fetch a parsed session.
-The card renders the returned data on a canvas at display refresh rate, so
-all the CPU work (downloading, decompressing, building the coverage grid)
-stays here on the server and happens exactly once per session.
+The card renders parsed sessions on a canvas at display refresh rate, so all
+CPU work (downloading, decompressing, building the coverage grid) stays on the
+server and happens exactly once per session. No-go commands convert geometry
+between the accumulated map and the selected session's raw robot frame.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import voluptuous as vol
@@ -19,8 +20,8 @@ from homeassistant.core import HomeAssistant, callback
 from .const import (
     CONF_MAP_ROTATION_OFFSET,
     DOMAIN,
+    HISTORY_CELL_SIZE_M,
     MAP_DEFAULT_ROTATION_OFFSET,
-
 )
 from .replay import build_replay_session
 
@@ -43,6 +44,8 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_list_sessions)
     websocket_api.async_register_command(hass, ws_get_session)
     websocket_api.async_register_command(hass, ws_delete_session)
+    websocket_api.async_register_command(hass, ws_get_nogo)
+    websocket_api.async_register_command(hass, ws_set_nogo)
 
 
 def _resolve_entry(hass: HomeAssistant, entry_id: str | None) -> tuple[str, dict[str, Any]] | None:
@@ -178,6 +181,207 @@ def _session_start(session: dict[str, Any]) -> float:
         return float(str(session.get("name", "")).split(".", 1)[0])
     except ValueError:
         return 0.0
+
+
+def _validate_nogo_lines(value: Any) -> list[list[dict[str, float]]]:
+    """Validate map-frame polylines received from the replay card."""
+    if not isinstance(value, list) or len(value) > 16:
+        raise ValueError("no-go lines must be a list of at most 16 lines")
+
+    lines: list[list[dict[str, float]]] = []
+    for raw_line in value:
+        if not isinstance(raw_line, list) or not 2 <= len(raw_line) <= 32:
+            raise ValueError("each no-go line must contain 2 to 32 points")
+        line: list[dict[str, float]] = []
+        for raw_point in raw_line:
+            if not isinstance(raw_point, dict):
+                raise ValueError("each no-go point must contain x and y")
+            try:
+                x = float(raw_point["x"])
+                y = float(raw_point["y"])
+            except (KeyError, TypeError, ValueError) as err:
+                raise ValueError("each no-go point must contain numeric x and y") from err
+            if not math.isfinite(x) or not math.isfinite(y):
+                raise ValueError("no-go coordinates must be finite")
+            line.append({"x": round(x, 3), "y": round(y, 3)})
+        lines.append(line)
+    return lines
+
+
+def _unpack_nogo_lines(value: Any) -> list[list[dict[str, float]]]:
+    """Extract firmware ``[{points: [...]}]`` geometry for map conversion."""
+    if not isinstance(value, list):
+        raise ValueError("noGoLines must be a list")
+    return _validate_nogo_lines(
+        [line.get("points") if isinstance(line, dict) else None for line in value]
+    )
+
+
+def _transform_nogo_lines(
+    lines: list[list[dict[str, float]]],
+    align: tuple[int, int, int] | None,
+    *,
+    inverse: bool,
+) -> list[list[dict[str, float]]]:
+    """Convert lines between a session's raw frame and the accumulated map.
+
+    Replay alignment is a quarter turn followed by a shift in 5 cm cells.
+    The robot stores no-go geometry in the raw frame it reports while running;
+    the card edits in the stable map frame, so this conversion must bracket
+    every load/save.
+    """
+    if not align or not any(align):
+        return lines
+
+    quarter, dx, dy = align
+    quarter %= 4
+    shift_x = dx * HISTORY_CELL_SIZE_M
+    shift_y = dy * HISTORY_CELL_SIZE_M
+    converted: list[list[dict[str, float]]] = []
+    for line in lines:
+        converted_line: list[dict[str, float]] = []
+        for point in line:
+            x = point["x"]
+            y = point["y"]
+            if inverse:
+                x -= shift_x
+                y -= shift_y
+                if quarter == 1:
+                    x, y = y, -x
+                elif quarter == 2:
+                    x, y = -x, -y
+                elif quarter == 3:
+                    x, y = -y, x
+            else:
+                if quarter == 1:
+                    x, y = -y, x
+                elif quarter == 2:
+                    x, y = -x, -y
+                elif quarter == 3:
+                    x, y = y, -x
+                x += shift_x
+                y += shift_y
+            converted_line.append({"x": round(x, 3), "y": round(y, 3)})
+        converted.append(converted_line)
+    return converted
+
+
+def _nogo_alignment(data: dict[str, Any], reference_session: str) -> tuple[int, int, int] | None:
+    """Return the map alignment used for the no-go reference session."""
+    mapper = data.get("mapper")
+    return mapper.alignment(reference_session) if mapper and reference_session else None
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "openneato/nogo_get",
+        vol.Optional("entry_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_get_nogo(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return robot no-go geometry converted into the card's map frame."""
+    resolved = _resolve_entry(hass, msg.get("entry_id"))
+    if resolved is None:
+        connection.send_error(msg["id"], "not_found", "No OpenNeato config entry found")
+        return
+    _entry_id, data = resolved
+
+    try:
+        config = await data["api"].get_nogo_config()
+        reference = str(config.get("referenceSession") or "")
+        raw_lines = _unpack_nogo_lines(config.get("noGoLines") or [])
+        map_lines = _transform_nogo_lines(
+            raw_lines,
+            _nogo_alignment(data, reference),
+            inverse=False,
+        )
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("No-go editor: configuration unavailable: %s", err)
+        connection.send_error(msg["id"], "nogo_unavailable", str(err))
+        return
+
+    connection.send_result(
+        msg["id"],
+        {
+            "enabled": bool(config.get("enabled")),
+            "referenceSession": reference,
+            "warningDistance": float(config.get("warningDistance") or 0.2),
+            "noGoLines": map_lines,
+            "mode": "observe",
+            "frame": "map",
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "openneato/nogo_set",
+        vol.Optional("entry_id"): str,
+        vol.Required("enabled"): bool,
+        vol.Required("reference_session"): str,
+        vol.Required("warning_distance"): vol.Coerce(float),
+        vol.Required("lines"): list,
+    }
+)
+@websocket_api.async_response
+async def ws_set_nogo(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Validate map-frame lines, convert them, and store them on the robot."""
+    resolved = _resolve_entry(hass, msg.get("entry_id"))
+    if resolved is None:
+        connection.send_error(msg["id"], "not_found", "No OpenNeato config entry found")
+        return
+    _entry_id, data = resolved
+
+    reference = msg["reference_session"].strip()
+    warning_distance = float(msg["warning_distance"])
+    try:
+        if not reference:
+            raise ValueError("select a reference cleaning session")
+        if not 0.05 <= warning_distance <= 1.0:
+            raise ValueError("warning distance must be between 0.05 and 1.0 metres")
+        map_lines = _validate_nogo_lines(msg["lines"])
+        if msg["enabled"] and not map_lines:
+            raise ValueError("draw at least one no-go line before enabling")
+        raw_lines = _transform_nogo_lines(
+            map_lines,
+            _nogo_alignment(data, reference),
+            inverse=True,
+        )
+        await data["api"].update_nogo_config(
+            {
+                "enabled": msg["enabled"],
+                "referenceSession": reference,
+                "warningDistance": round(warning_distance, 3),
+                "noGoLines": [{"points": line} for line in raw_lines],
+            }
+        )
+        await data["coordinator"].async_request_refresh()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("No-go editor: failed to save configuration: %s", err)
+        connection.send_error(msg["id"], "save_failed", str(err))
+        return
+
+    connection.send_result(
+        msg["id"],
+        {
+            "saved": True,
+            "enabled": msg["enabled"],
+            "referenceSession": reference,
+            "warningDistance": round(warning_distance, 3),
+            "noGoLines": map_lines,
+            "mode": "observe",
+            "frame": "map",
+        },
+    )
 
 
 @websocket_api.websocket_command(
