@@ -1,12 +1,13 @@
 #include "cleaning_history.h"
 #include "json_fields.h"
 #include "neato_serial.h"
+#include "nogo_guard.h"
 #include "system_manager.h"
 #include <SPIFFS.h>
 #include <cmath>
 
-CleaningHistory::CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr) :
-    LoopTask(HISTORY_INTERVAL_IDLE_MS), neato(neato), dataLogger(logger), systemManager(sysMgr) {
+CleaningHistory::CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr, NoGoGuard& noGo) :
+    LoopTask(HISTORY_INTERVAL_IDLE_MS), neato(neato), dataLogger(logger), systemManager(sysMgr), noGoGuard(noGo) {
     TaskRegistry::add(this);
 }
 
@@ -154,6 +155,8 @@ void CleaningHistory::startCollection(const String& uiState) {
         return;
     }
 
+    noGoGuard.startRun();
+
     // Fetch battery level for session metadata, then write header
     neato.getCharger([this](bool ok, const ChargerData& charger) {
         if (ok) {
@@ -168,6 +171,8 @@ void CleaningHistory::startCollection(const String& uiState) {
 }
 
 void CleaningHistory::stopCollection() {
+    noGoGuard.endRun();
+
     // Flush any buffered snapshots before writing summary
     flushWriteBuffer();
 
@@ -571,6 +576,7 @@ bool CleaningHistory::recoverCollection(const String& uiState) {
     }
 
     collecting = true;
+    noGoGuard.startRun();
     setInterval(HISTORY_INTERVAL_ACTIVE_MS);
     LOG("HIST", "Recovered session: %s (%u snapshots, %zu orphans merged)", activeFilePath.c_str(), snapshotCount,
         orphans.size());
@@ -820,6 +826,7 @@ void CleaningHistory::writeSnapshot(float x, float y, float theta, float time) {
     String line = "{\"x\":" + String(x, 3) + ",\"y\":" + String(y, 3) + ",\"t\":" + String(theta, 1) +
                   ",\"ts\":" + String(time, 1) + "}";
 
+    noGoGuard.observePose(x, y);
     updateAccumulators(x, y, theta);
     bufferLine(line);
     snapshotCount++;

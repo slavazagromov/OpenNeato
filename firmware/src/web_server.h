@@ -16,6 +16,7 @@ class FirmwareManager;
 class SettingsManager;
 class ManualCleanManager;
 class NotificationManager;
+class NoGoGuard;
 class CleaningHistory;
 class WiFiManager;
 class Scheduler;
@@ -24,7 +25,7 @@ class WebServer {
 public:
     WebServer(AsyncWebServer& server, NeatoSerial& neato, DataLogger& logger, SystemManager& sys, FirmwareManager& fw,
               SettingsManager& settings, ManualCleanManager& manual, NotificationManager& notif,
-              CleaningHistory& history, WiFiManager& wifi, Scheduler& scheduler);
+              CleaningHistory& history, WiFiManager& wifi, Scheduler& scheduler, NoGoGuard& noGo);
     void begin();
 
     // Last time any API request was received (millis()). Any module can check
@@ -43,6 +44,7 @@ private:
     CleaningHistory& historyMgr;
     WiFiManager& wifiMgr;
     Scheduler& scheduler;
+    NoGoGuard& noGoGuard;
 
     void registerApiRoutes();
     void registerManualRoutes();
@@ -51,6 +53,7 @@ private:
     void registerSettingsRoutes();
     void registerFirmwareRoutes();
     void registerMapRoutes();
+    void registerNoGoRoutes();
     void registerWiFiRoutes();
     static void sendGzipAsset(AsyncWebServerRequest *request, const uint8_t *data, size_t len, const char *contentType);
     static void sendError(AsyncWebServerRequest *request, int code, const String& msg);

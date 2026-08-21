@@ -14,6 +14,7 @@
 #include "manual_clean_manager.h"
 #include "notification_manager.h"
 #include "cleaning_history.h"
+#include "nogo_guard.h"
 #include "loop_task.h"
 
 // Global objects
@@ -28,9 +29,10 @@ FirmwareManager firmwareManager(dataLogger);
 Scheduler scheduler(settingsManager, systemManager, neatoSerial, dataLogger, prefs);
 ManualCleanManager manualClean(neatoSerial);
 NotificationManager notifMgr(neatoSerial, settingsManager, dataLogger);
-CleaningHistory cleaningHistory(neatoSerial, dataLogger, systemManager);
+NoGoGuard noGoGuard(dataLogger);
+CleaningHistory cleaningHistory(neatoSerial, dataLogger, systemManager, noGoGuard);
 WebServer webServer(server, neatoSerial, dataLogger, systemManager, firmwareManager, settingsManager, manualClean,
-                    notifMgr, cleaningHistory, wifiManager, scheduler);
+                    notifMgr, cleaningHistory, wifiManager, scheduler, noGoGuard);
 
 // Tracks whether web server has been started (may be deferred if WiFi was slow at boot)
 bool webServerStarted = false;
@@ -153,6 +155,9 @@ void setup() {
         return sc;
     });
     dataLogger.begin();
+
+    // Load the passive no-go configuration after SPIFFS has mounted.
+    noGoGuard.begin();
 
     // Fetch robot time as fallback clock (parsed from "Time UTC" in GetVersion)
     neatoSerial.getVersion([](bool ok, const VersionData& v) {

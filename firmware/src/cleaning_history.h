@@ -10,6 +10,7 @@
 #include "neato_commands.h"
 
 class NeatoSerial;
+class NoGoGuard;
 class SystemManager;
 
 // Session metadata returned by listSessions() — includes the raw JSON of
@@ -35,7 +36,7 @@ struct HistorySessionInfo {
 
 class CleaningHistory : public LoopTask {
 public:
-    CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr);
+    CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr, NoGoGuard& noGo);
 
     // -- File management (for API, mirrors DataLogger pattern) ----------------
 
@@ -68,6 +69,7 @@ private:
     NeatoSerial& neato;
     DataLogger& dataLogger;
     SystemManager& systemManager;
+    NoGoGuard& noGoGuard;
 
     // -- State tracking ------------------------------------------------------
     String prevUiState;

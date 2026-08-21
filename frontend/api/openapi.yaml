@@ -812,6 +812,53 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Ok"
+  /api/nogo/config:
+    get:
+      tags:
+        - History
+      summary: Get the passive no-go guard configuration
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoGoConfig"
+    put:
+      tags:
+        - History
+      summary: Validate, store, and activate passive no-go geometry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoGoConfig"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoGoConfig"
+        "400":
+          description: Invalid no-go configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/nogo/status:
+    get:
+      tags:
+        - History
+      summary: Get passive no-go guard runtime status
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoGoStatus"
   /api/history/{filename}:
     get:
       tags:
@@ -883,6 +930,109 @@ paths:
                 $ref: "#/components/schemas/Error"
 components:
   schemas:
+    NoGoPoint:
+      type: object
+      properties:
+        x:
+          type: number
+          format: float
+        y:
+          type: number
+          format: float
+      required:
+        - x
+        - y
+    NoGoLine:
+      type: object
+      properties:
+        points:
+          type: array
+          minItems: 2
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/NoGoPoint"
+      required:
+        - points
+    NoGoConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Arms observation only; this version never sends motor commands
+        referenceSession:
+          type: string
+          description: Cleaning-history map used when drawing these dock-relative lines
+        warningDistance:
+          type: number
+          format: float
+          minimum: 0.05
+          maximum: 1
+          default: 0.2
+        noGoLines:
+          type: array
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/NoGoLine"
+      required:
+        - enabled
+        - referenceSession
+        - warningDistance
+        - noGoLines
+    NoGoStatus:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+            - observe
+        enabled:
+          type: boolean
+        runActive:
+          type: boolean
+        armed:
+          type: boolean
+        near:
+          type: boolean
+        breached:
+          type: boolean
+        nearCount:
+          type: integer
+        breachCount:
+          type: integer
+        segments:
+          type: integer
+        warningDistance:
+          type: number
+          format: float
+        lastDistance:
+          type: number
+          format: float
+        lastX:
+          type: number
+          format: float
+        lastY:
+          type: number
+          format: float
+        lastEventMs:
+          type: integer
+        referenceSession:
+          type: string
+      required:
+        - mode
+        - enabled
+        - runActive
+        - armed
+        - near
+        - breached
+        - nearCount
+        - breachCount
+        - segments
+        - warningDistance
+        - lastDistance
+        - lastX
+        - lastY
+        - lastEventMs
+        - referenceSession
     Ok:
       type: object
       properties:

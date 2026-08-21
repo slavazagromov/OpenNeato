@@ -201,6 +201,12 @@ enum CommandStatus {
 #define HISTORY_MIN_SNAPSHOTS 3 // Discard sessions with fewer snapshots (too short to render a useful map)
 #define HISTORY_IMPORT_MAX_BYTES 262144 // 256 KB max import file size (2h clean at 2s intervals ~ 180KB)
 
+// Passive no-go guard. Geometry is stored once when explicitly saved and kept
+// in RAM while cleaning, so pose observation never writes to flash.
+#define NOGO_CONFIG_MAX_BYTES 8192
+#define NOGO_MAX_LINES 16
+#define NOGO_MAX_POINTS_PER_LINE 32
+
 // Task Watchdog Timer (TWDT) — hardware watchdog that resets the ESP32 if
 // loop() stops running (deadlock, infinite loop, blocking I/O). The main task
 // must call esp_task_wdt_reset() every iteration; if it misses the deadline,
