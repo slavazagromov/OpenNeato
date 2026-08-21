@@ -108,6 +108,15 @@
       },
       "cumulative_cleaning_time": {
         "name": "Cumulative cleaning time"
+      },
+      "nogo_distance": {
+        "name": "No-go line distance"
+      },
+      "nogo_near_count": {
+        "name": "No-go near count"
+      },
+      "nogo_breach_count": {
+        "name": "No-go breach count"
       }
     },
     "binary_sensor": {
@@ -161,6 +170,15 @@
       },
       "bumper_lds_right": {
         "name": "Bumper LDS right"
+      },
+      "nogo_armed": {
+        "name": "No-go observer armed"
+      },
+      "nogo_near": {
+        "name": "Near no-go line"
+      },
+      "nogo_breached": {
+        "name": "No-go line breached"
       }
     },
     "switch": {

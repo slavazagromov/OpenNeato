@@ -11,7 +11,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import OpenNeatoApiClient, OpenNeatoConnectionError
-from .const import DEFAULT_POLL_INTERVAL, DOMAIN
+from .const import (
+    DEFAULT_POLL_INTERVAL,
+    DOMAIN,
+    EVENT_NOGO_BREACHED,
+    EVENT_NOGO_NEAR,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,7 +61,9 @@ def latest_completed_session(history: Any) -> dict[str, Any] | None:
 class OpenNeatoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Single coordinator for all OpenNeato data."""
 
-    def __init__(self, hass: HomeAssistant, api: OpenNeatoApiClient) -> None:
+    def __init__(
+        self, hass: HomeAssistant, api: OpenNeatoApiClient, serial: str
+    ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -65,6 +72,7 @@ class OpenNeatoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(seconds=DEFAULT_POLL_INTERVAL),
         )
         self.api = api
+        self.serial = serial
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch all data concurrently."""
@@ -80,13 +88,14 @@ class OpenNeatoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.api.get_sensors(),
             self.api.get_battery_analog(),
             self.api.get_battery_warranty(),
+            self.api.get_nogo_status(),
             return_exceptions=True,
         )
 
         keys = (
             "state", "charger", "error", "user_settings",
             "system", "settings", "motors", "history", "sensors",
-            "analog", "warranty",
+            "analog", "warranty", "nogo",
         )
         # Critical endpoints — if ALL of these fail we consider the robot
         # unreachable. Non-critical endpoints (like /api/error, which can hang
@@ -129,5 +138,29 @@ class OpenNeatoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Coordinator update succeeded with %d failed endpoints: %s",
                 len(failures), ", ".join(failures),
             )
+
+        previous_nogo = self.data.get("nogo", {}) if self.data else None
+        current_nogo = data.get("nogo", {})
+        if previous_nogo is not None and not isinstance(previous_nogo, dict):
+            previous_nogo = {}
+        if previous_nogo is not None and isinstance(current_nogo, dict):
+            for field, event_type in (
+                ("near", EVENT_NOGO_NEAR),
+                ("breached", EVENT_NOGO_BREACHED),
+            ):
+                if current_nogo.get(field) and not previous_nogo.get(field):
+                    self.hass.bus.async_fire(
+                        event_type,
+                        {
+                            "serial": self.serial,
+                            "host": self.api.base_url,
+                            "x": current_nogo.get("lastX"),
+                            "y": current_nogo.get("lastY"),
+                            "distance": current_nogo.get("lastDistance"),
+                            "reference_session": current_nogo.get(
+                                "referenceSession"
+                            ),
+                        },
+                    )
 
         return data

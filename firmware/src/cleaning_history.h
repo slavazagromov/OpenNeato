@@ -10,6 +10,7 @@
 #include "neato_commands.h"
 
 class NeatoSerial;
+class NoGoGuard;
 class SystemManager;
 
 // Last completed cleaning session stats — populated at end of each session,
@@ -52,7 +53,7 @@ struct HistorySessionInfo {
 
 class CleaningHistory : public LoopTask {
 public:
-    CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr);
+    CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr, NoGoGuard& noGo);
 
     // -- File management (for API, mirrors DataLogger pattern) ----------------
 
@@ -88,6 +89,7 @@ private:
     NeatoSerial& neato;
     DataLogger& dataLogger;
     SystemManager& systemManager;
+    NoGoGuard& noGoGuard;
 
     // -- Last session stats (survives reset, updated at end of each session) --
     LastCleanStats lastCleanStats;

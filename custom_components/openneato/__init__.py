@@ -90,7 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     sw_version = robot_info.get("softwareVersion", entry.data.get("software_version"))
     fw_version = firmware_info.get("version", entry.data.get("firmware_version"))
 
-    coordinator = OpenNeatoCoordinator(hass, api)
+    coordinator = OpenNeatoCoordinator(hass, api, serial)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})

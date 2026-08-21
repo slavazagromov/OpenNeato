@@ -405,6 +405,37 @@ SENSOR_DESCRIPTIONS: tuple[OpenNeatoSensorEntityDescription, ...] = (
             else None
         ),
     ),
+    # ── Passive no-go observer ──────────────────────────────────────────
+    OpenNeatoSensorEntityDescription(
+        key="nogo_distance",
+        translation_key="nogo_distance",
+        name="No-go line distance",
+        section="nogo",
+        field="lastDistance",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.METERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:map-marker-distance",
+        value_fn=lambda value: None if value is None or value < 0 else value,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_near_count",
+        translation_key="nogo_near_count",
+        name="No-go near count",
+        section="nogo",
+        field="nearCount",
+        icon="mdi:counter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_breach_count",
+        translation_key="nogo_breach_count",
+        name="No-go breach count",
+        section="nogo",
+        field="breachCount",
+        icon="mdi:counter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
 )
 
 

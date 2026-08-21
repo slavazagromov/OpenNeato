@@ -99,6 +99,33 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[OpenNeatoBinarySensorEntityDescription, ...] =
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # ── Passive no-go observer ──────────────────────────────────────────
+    OpenNeatoBinarySensorEntityDescription(
+        key="nogo_armed",
+        translation_key="nogo_armed",
+        name="No-go observer armed",
+        section="nogo",
+        field="armed",
+        icon="mdi:shield-outline",
+    ),
+    OpenNeatoBinarySensorEntityDescription(
+        key="nogo_near",
+        translation_key="nogo_near",
+        name="Near no-go line",
+        section="nogo",
+        field="near",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:map-marker-alert-outline",
+    ),
+    OpenNeatoBinarySensorEntityDescription(
+        key="nogo_breached",
+        translation_key="nogo_breached",
+        name="No-go line breached",
+        section="nogo",
+        field="breached",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:shield-alert-outline",
+    ),
     # ── Digital sensors ────────────────────────────────────────────────
     OpenNeatoBinarySensorEntityDescription(
         key="sensors_dustbin_in",

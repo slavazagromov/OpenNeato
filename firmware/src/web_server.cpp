@@ -7,6 +7,7 @@
 #include "firmware_manager.h"
 #include "manual_clean_manager.h"
 #include "notification_manager.h"
+#include "nogo_guard.h"
 #include "cleaning_history.h"
 #include "wifi_manager.h"
 #include <SPIFFS.h>
@@ -15,9 +16,9 @@ unsigned long WebServer::lastApiActivity = 0;
 
 WebServer::WebServer(AsyncWebServer& server, NeatoSerial& neato, DataLogger& logger, SystemManager& sys,
                      FirmwareManager& fw, SettingsManager& settings, ManualCleanManager& manual,
-                     NotificationManager& notif, CleaningHistory& history, WiFiManager& wifi) :
+                     NotificationManager& notif, CleaningHistory& history, WiFiManager& wifi, NoGoGuard& noGo) :
     server(server), neato(neato), logger(logger), sysMgr(sys), fwMgr(fw), settingsMgr(settings), manualMgr(manual),
-    notifMgr(notif), historyMgr(history), wifiMgr(wifi) {}
+    notifMgr(notif), historyMgr(history), wifiMgr(wifi), noGoGuard(noGo) {}
 
 void WebServer::loggedRoute(const char *path, WebRequestMethodComposite httpMethod, SyncHandler handler) {
     server.on(path, httpMethod, [this, handler](AsyncWebServerRequest *request) {
@@ -71,10 +72,39 @@ void WebServer::begin() {
     registerSystemRoutes();
     registerSettingsRoutes();
     registerFirmwareRoutes();
+    registerNoGoRoutes();
     registerMapRoutes();
     registerWiFiRoutes();
 
     LOG("WEB", "Frontend and API routes registered");
+}
+
+// -- Passive no-go guard endpoints ------------------------------------------
+
+void WebServer::registerNoGoRoutes() {
+    loggedRoute("/api/nogo/config", HTTP_GET, [this](AsyncWebServerRequest *request) -> int {
+        request->send(200, "application/json", noGoGuard.getConfigJson());
+        return 200;
+    });
+
+    loggedBodyRoute("/api/nogo/config", HTTP_PUT,
+                    [this](AsyncWebServerRequest *request, uint8_t *data, size_t len) -> int {
+                        String body(reinterpret_cast<const char *>(data), len);
+                        String error;
+                        if (!noGoGuard.applyConfig(body, error)) {
+                            sendError(request, 400, error);
+                            return 400;
+                        }
+                        request->send(200, "application/json", noGoGuard.getConfigJson());
+                        return 200;
+                    });
+
+    loggedRoute("/api/nogo/status", HTTP_GET, [this](AsyncWebServerRequest *request) -> int {
+        request->send(200, "application/json", noGoGuard.getStatusJson());
+        return 200;
+    });
+
+    LOG("WEB", "Passive no-go guard routes registered");
 }
 
 void WebServer::registerApiRoutes() {

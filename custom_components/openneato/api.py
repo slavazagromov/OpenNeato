@@ -73,7 +73,9 @@ class OpenNeatoApiClient:
         """Return the aiohttp session."""
         return self._session
 
-    async def _get(self, path: str) -> dict[str, Any]:
+    async def _get(
+        self, path: str, *, allow_not_found: bool = False
+    ) -> dict[str, Any]:
         """Perform a GET request and return parsed JSON."""
         url = f"{self._base_url}{path}"
         _LOGGER.debug("GET %s", url)
@@ -84,6 +86,8 @@ class OpenNeatoApiClient:
                         "GET %s -> %s (%s)",
                         path, response.status, response.content_type,
                     )
+                    if allow_not_found and response.status == 404:
+                        return {}
                     response.raise_for_status()
                     return await _read_json(response)
         except aiohttp.ClientConnectionError as err:
@@ -254,6 +258,20 @@ class OpenNeatoApiClient:
     async def get_history(self) -> list[dict[str, Any]]:
         """Get cleaning history sessions."""
         return await self._get("/api/history")  # type: ignore[return-value]
+
+    async def get_nogo_status(self) -> dict[str, Any]:
+        """Get passive no-go state, tolerating pre-no-go firmware."""
+        return await self._get("/api/nogo/status", allow_not_found=True)
+
+    async def get_nogo_config(self) -> dict[str, Any]:
+        """Get the no-go geometry configuration."""
+        return await self._get("/api/nogo/config")
+
+    async def update_nogo_config(
+        self, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Validate and store no-go geometry on the bridge."""
+        return await self._put("/api/nogo/config", json_data=config)
 
     async def get_lidar(self) -> dict[str, Any]:
         """Get the latest LDS LIDAR scan (360 points)."""
