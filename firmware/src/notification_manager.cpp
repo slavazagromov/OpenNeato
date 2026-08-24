@@ -1,5 +1,6 @@
 #include "notification_manager.h"
 #include "cleaning_history.h"
+#include "nogo_guard.h"
 #include "neato_serial.h"
 #include "settings_manager.h"
 #include "data_logger.h"
@@ -15,8 +16,9 @@
 #define NTFY_DONE_PENDING_TIMEOUT_MS 5000
 
 NotificationManager::NotificationManager(NeatoSerial& neato, SettingsManager& settings, DataLogger& logger,
-                                         CleaningHistory& history) :
-    LoopTask(NOTIF_INTERVAL_IDLE_MS), neato(neato), settings(settings), dataLogger(logger), history(history) {
+                                         CleaningHistory& history, NoGoGuard& noGoGuard) :
+    LoopTask(NOTIF_INTERVAL_IDLE_MS), neato(neato), settings(settings), dataLogger(logger), history(history),
+    noGoGuard(noGoGuard) {
     TaskRegistry::add(this);
 }
 
@@ -57,67 +59,76 @@ void NotificationManager::checkTransitions() {
                 const String& ui = state.uiState;
                 const String& rs = state.robotState;
 
-                // Detect transitions
-                if (!prevUiState.isEmpty()) {
-                    bool wasCleaning = prevUiState.indexOf("CLEANINGRUNNING") >= 0;
-                    bool wasDocking = prevUiState.indexOf("DOCKING") >= 0;
-                    bool isCleaningRunning = ui.indexOf("CLEANINGRUNNING") >= 0;
-                    bool isDocking = ui.indexOf("DOCKING") >= 0;
-                    bool isSuspended = ui.indexOf("CLEANINGSUSPENDED") >= 0;
-                    bool isIdle = ui == "UIMGR_STATE_IDLE" || ui == "UIMGR_STATE_STANDBY";
+                // A no-go escape intentionally passes through PAUSED and
+                // TESTMODE before resuming the same cleaning session. Hide
+                // those implementation states from transition tracking so the
+                // resume cannot generate another "Cleaning started" alert.
+                if (noGoGuard.isManeuverActive()) {
+                    setInterval(NOTIF_INTERVAL_ACTIVE_MS);
+                } else {
+                    // Detect transitions
+                    if (!prevUiState.isEmpty()) {
+                        bool wasCleaning = prevUiState.indexOf("CLEANINGRUNNING") >= 0;
+                        bool wasDocking = prevUiState.indexOf("DOCKING") >= 0;
+                        bool isCleaningRunning = ui.indexOf("CLEANINGRUNNING") >= 0;
+                        bool isDocking = ui.indexOf("DOCKING") >= 0;
+                        bool isSuspended = ui.indexOf("CLEANINGSUSPENDED") >= 0;
+                        bool isIdle = ui == "UIMGR_STATE_IDLE" || ui == "UIMGR_STATE_STANDBY";
 
-                    // Track cleaning context when entering docking
-                    if (wasCleaning && isDocking) {
-                        wasCleaningBeforeDock = true;
+                        // Track cleaning context when entering docking
+                        if (wasCleaning && isDocking) {
+                            wasCleaningBeforeDock = true;
+                        }
+
+                        // Mid-clean recharge: robot state ST_M1_Charging_Cleaning means
+                        // the robot docked to recharge and will resume cleaning afterwards.
+                        // The UI state transitions DOCKING -> CLEANINGSUSPENDED once on the dock.
+                        bool isRecharging = rs.indexOf("Charging_Cleaning") >= 0;
+
+                        // Fresh start: idle -> CLEANINGRUNNING (excludes resume from
+                        // pause/suspended and resume after mid-clean recharge dock).
+                        bool prevInCleaningContext =
+                                prevUiState.indexOf("CLEANING") >= 0 || prevUiState.indexOf("DOCKING") >= 0;
+                        if (isCleaningRunning && !prevInCleaningContext && cfg.ntfyOnStart) {
+                            sendNotification(topic, "arrow_forward", hostname + ": Cleaning started");
+                        }
+
+                        if (isDocking && !wasDocking && isRecharging && cfg.ntfyOnDocking) {
+                            // Recharge dock — robot will resume cleaning after charging
+                            sendNotification(topic, "electric_plug", hostname + ": Returning to base to recharge");
+                        }
+
+                        // Cleaning completed: cleaning/docking -> idle, but NOT if it's a recharge.
+                        // Also handle suspended -> idle (user stops clean while recharging).
+                        bool dockingDone = wasDocking && wasCleaningBeforeDock && !isRecharging;
+                        bool suspendedDone =
+                                (prevUiState.indexOf("CLEANINGSUSPENDED") >= 0) && wasCleaningBeforeDock;
+                        if ((wasCleaning || dockingDone || suspendedDone) && isIdle && cfg.ntfyOnDone && !donePending) {
+                            // Defer the send: CleaningHistory::stopCollection finalizes stats
+                            // inside an async getCharger callback, so reading getLastCleanStats()
+                            // here can race and pull stale data from the prior session. Capture
+                            // the current sessionId; flushPendingDone() fires once it increments
+                            // (or after NTFY_DONE_PENDING_TIMEOUT_MS).
+                            donePending = true;
+                            doneTriggerSessionId = history.getLastCleanStats().sessionId;
+                            donePendingSinceMs = millis();
+                            doneHostname = hostname;
+                            doneTopic = topic;
+                        }
+
+                        // Clear tracking flag when leaving docking — but preserve it
+                        // through DOCKING -> CLEANINGSUSPENDED (mid-clean recharge)
+                        if (wasDocking && !isDocking && !isSuspended) {
+                            wasCleaningBeforeDock = false;
+                        }
                     }
 
-                    // Mid-clean recharge: robot state ST_M1_Charging_Cleaning means
-                    // the robot docked to recharge and will resume cleaning afterwards.
-                    // The UI state transitions DOCKING -> CLEANINGSUSPENDED once on the dock.
-                    bool isRecharging = rs.indexOf("Charging_Cleaning") >= 0;
-
-                    // Fresh start: idle -> CLEANINGRUNNING (excludes resume from
-                    // pause/suspended and resume after mid-clean recharge dock).
-                    bool prevInCleaningContext =
-                            prevUiState.indexOf("CLEANING") >= 0 || prevUiState.indexOf("DOCKING") >= 0;
-                    if (isCleaningRunning && !prevInCleaningContext && cfg.ntfyOnStart) {
-                        sendNotification(topic, "arrow_forward", hostname + ": Cleaning started");
-                    }
-
-                    if (isDocking && !wasDocking && isRecharging && cfg.ntfyOnDocking) {
-                        // Recharge dock — robot will resume cleaning after charging
-                        sendNotification(topic, "electric_plug", hostname + ": Returning to base to recharge");
-                    }
-
-                    // Cleaning completed: cleaning/docking -> idle, but NOT if it's a recharge.
-                    // Also handle suspended -> idle (user stops clean while recharging).
-                    bool dockingDone = wasDocking && wasCleaningBeforeDock && !isRecharging;
-                    bool suspendedDone = (prevUiState.indexOf("CLEANINGSUSPENDED") >= 0) && wasCleaningBeforeDock;
-                    if ((wasCleaning || dockingDone || suspendedDone) && isIdle && cfg.ntfyOnDone && !donePending) {
-                        // Defer the send: CleaningHistory::stopCollection finalizes stats
-                        // inside an async getCharger callback, so reading getLastCleanStats()
-                        // here can race and pull stale data from the prior session. Capture
-                        // the current sessionId; flushPendingDone() fires once it increments
-                        // (or after NTFY_DONE_PENDING_TIMEOUT_MS).
-                        donePending = true;
-                        doneTriggerSessionId = history.getLastCleanStats().sessionId;
-                        donePendingSinceMs = millis();
-                        doneHostname = hostname;
-                        doneTopic = topic;
-                    }
-
-                    // Clear tracking flag when leaving docking — but preserve it
-                    // through DOCKING -> CLEANINGSUSPENDED (mid-clean recharge)
-                    if (wasDocking && !isDocking && !isSuspended) {
-                        wasCleaningBeforeDock = false;
-                    }
+                    // Update adaptive interval based on current state
+                    bool active = isActiveState(ui);
+                    setInterval(active ? NOTIF_INTERVAL_ACTIVE_MS : NOTIF_INTERVAL_IDLE_MS);
+                    prevUiState = ui;
+                    prevRobotState = rs;
                 }
-
-                // Update adaptive interval based on current state
-                bool active = isActiveState(ui);
-                setInterval(active ? NOTIF_INTERVAL_ACTIVE_MS : NOTIF_INTERVAL_IDLE_MS);
-                prevUiState = ui;
-                prevRobotState = rs;
             }
 
             if (errOk) {

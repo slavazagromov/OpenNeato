@@ -294,6 +294,38 @@ void NoGoGuard::sendTestModeOn() {
             return;
         }
         testModeEntered = true;
+        // TestMode takes ownership away from the native cleaner and its
+        // cleaning motors may stop. Restore them before moving so a virtual
+        // barrier feels like a bumper hit instead of a complete clean stop.
+        sendVacuumOn();
+    });
+}
+
+void NoGoGuard::sendVacuumOn() {
+    stage = Stage::CLEANING_MOTORS_PENDING;
+    lastAction = "vacuum_on";
+    serial.setMotorVacuum(true, settingsManager.get().vacuumSpeed, [this](bool ok) {
+        logStep("vacuum_on", ok);
+        // Motor restoration is best-effort. Boundary avoidance remains the
+        // safety priority even if an optional cleaning motor rejects a command.
+        sendBrushOn();
+    });
+}
+
+void NoGoGuard::sendBrushOn() {
+    stage = Stage::CLEANING_MOTORS_PENDING;
+    lastAction = "brush_on";
+    serial.setMotorBrush(settingsManager.get().brushRpm, [this](bool ok) {
+        logStep("brush_on", ok);
+        sendSideBrushOn();
+    });
+}
+
+void NoGoGuard::sendSideBrushOn() {
+    stage = Stage::CLEANING_MOTORS_PENDING;
+    lastAction = "side_brush_on";
+    serial.setMotorSideBrush(true, settingsManager.get().sideBrushPower, [this](bool ok) {
+        logStep("side_brush_on", ok);
         sendStop();
     });
 }
@@ -419,6 +451,7 @@ const char *NoGoGuard::stageName() const {
         case Stage::IDLE: return "idle";
         case Stage::PAUSE_PENDING: return "pause";
         case Stage::TESTMODE_ON_PENDING: return "testmode_on";
+        case Stage::CLEANING_MOTORS_PENDING: return "cleaning_motors";
         case Stage::STOP_PENDING: return "stop";
         case Stage::REVERSE_PENDING: return "reverse";
         case Stage::REVERSE_WAIT: return "reverse_wait";

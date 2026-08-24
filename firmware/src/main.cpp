@@ -30,7 +30,7 @@ Scheduler scheduler(settingsManager, systemManager, neatoSerial, dataLogger);
 ManualCleanManager manualClean(neatoSerial);
 NoGoGuard noGoGuard(neatoSerial, dataLogger, settingsManager);
 CleaningHistory cleaningHistory(neatoSerial, dataLogger, systemManager, noGoGuard);
-NotificationManager notifMgr(neatoSerial, settingsManager, dataLogger, cleaningHistory);
+NotificationManager notifMgr(neatoSerial, settingsManager, dataLogger, cleaningHistory, noGoGuard);
 WebServer webServer(server, neatoSerial, dataLogger, systemManager, firmwareManager, settingsManager, manualClean,
                     notifMgr, cleaningHistory, wifiManager, noGoGuard);
 

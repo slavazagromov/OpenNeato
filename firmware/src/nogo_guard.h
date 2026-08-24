@@ -13,8 +13,9 @@ class SettingsManager;
 
 // Active no-go guard. During an autonomous cleaning run it samples the
 // dock-relative robot pose independently of history recording. On approach to
-// a configured segment it pauses cleaning, performs a bumper-style reverse and
-// turn in TestMode, exits TestMode, and explicitly resumes the same clean.
+// a configured segment it preserves the cleaning motors, performs a
+// bumper-style reverse and turn in TestMode, exits TestMode, and explicitly
+// resumes the same clean.
 class NoGoGuard : public LoopTask {
 public:
     NoGoGuard(NeatoSerial& serial, DataLogger& logger, SettingsManager& settings);
@@ -33,6 +34,7 @@ private:
         IDLE,
         PAUSE_PENDING,
         TESTMODE_ON_PENDING,
+        CLEANING_MOTORS_PENDING,
         STOP_PENDING,
         REVERSE_PENDING,
         REVERSE_WAIT,
@@ -87,6 +89,9 @@ private:
     void triggerEscape(float distance, bool crossed);
     void sendPause();
     void sendTestModeOn();
+    void sendVacuumOn();
+    void sendBrushOn();
+    void sendSideBrushOn();
     void sendStop();
     void sendReverse();
     void sendTurn();
