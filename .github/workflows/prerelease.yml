@@ -80,13 +80,6 @@ jobs:
           ref: ${{ needs.resolve.outputs.checkout_ref }}
           fetch-depth: 0
 
-      - name: Create release tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ needs.resolve.outputs.release_tag }}" -m "Prerelease ${{ needs.resolve.outputs.release_tag }}"
-          git push origin "${{ needs.resolve.outputs.release_tag }}"
-
       # --- Frontend ---
 
       - name: Set up Node.js
@@ -132,6 +125,15 @@ jobs:
             echo "Building $env..."
             pio run -e "$env"
           done < <(grep -oE '^\[env:([a-zA-Z0-9_-]+-release)\]' platformio.ini | sed 's/\[env:\(.*\)\]/\1/')
+
+      # Tag only after every source build succeeds. A failed build therefore
+      # leaves no stale tag and can be retried at the same commit.
+      - name: Create release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ needs.resolve.outputs.release_tag }}" -m "Prerelease ${{ needs.resolve.outputs.release_tag }}"
+          git push origin "${{ needs.resolve.outputs.release_tag }}"
 
       # --- Flash tool + GitHub Release ---
 

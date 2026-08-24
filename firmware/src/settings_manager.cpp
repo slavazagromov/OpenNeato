@@ -140,6 +140,14 @@ const Settings& SettingsManager::get() {
     return current;
 }
 
+void SettingsManager::enableTemporaryInfoLogging() {
+    if (current.logLevel == LOG_LEVEL_OFF)
+        current.logLevel = LOG_LEVEL_INFO;
+    logLevelEnabledAt = millis();
+    LOG("SETTINGS", "Temporary no-go info logging enabled (auto-off in %lu min)",
+        static_cast<unsigned long>(LOG_LEVEL_AUTO_OFF_INFO_MS / 60000));
+}
+
 // -- Partial update ----------------------------------------------------------
 
 // Non-empty, max 32 chars, alphanumeric + hyphens only.

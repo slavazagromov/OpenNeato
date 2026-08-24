@@ -312,7 +312,7 @@ async def ws_get_nogo(
             "referenceSession": reference,
             "warningDistance": float(config.get("warningDistance") or 0.2),
             "noGoLines": map_lines,
-            "mode": "observe",
+            "mode": "enforce",
             "frame": "map",
         },
     )
@@ -378,7 +378,7 @@ async def ws_set_nogo(
             "referenceSession": reference,
             "warningDistance": round(warning_distance, 3),
             "noGoLines": map_lines,
-            "mode": "observe",
+            "mode": "enforce",
             "frame": "map",
         },
     )

@@ -61,6 +61,9 @@ public:
     void getErrClear(std::function<void(bool, const ErrorData&)> callback);
     void getLdsScan(std::function<void(bool, const LdsScanData&)> callback);
     void getRobotPos(bool smooth, std::function<void(bool, const RobotPosData&)> callback);
+    // Bypass the one-second sensor cache. Used by the no-go safety loop where
+    // stale localization can mean several centimetres of additional travel.
+    void getRobotPosFresh(bool smooth, std::function<void(bool, const RobotPosData&)> callback);
     // -- Action commands (fire-and-forget by default) ------------------------
 
     bool clean(const String& action, std::function<void(bool)> callback = nullptr);

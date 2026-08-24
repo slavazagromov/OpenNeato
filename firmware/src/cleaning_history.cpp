@@ -772,6 +772,14 @@ void CleaningHistory::collectSnapshot() {
         if (stateOk) {
             prevUiState = state.uiState;
 
+            // The active no-go guard temporarily moves the robot through
+            // PAUSED and TESTMODE while preserving this cleaning session.
+            // Do not finalize history in the middle of that escape sequence.
+            if (noGoGuard.isManeuverActive()) {
+                fetchPending = false;
+                return;
+            }
+
             bool isDocking = isDockingState(state.uiState);
             bool isCleaning = isCleaningState(state.uiState);
             bool isSuspended = isSuspendedState(state.uiState);
@@ -919,7 +927,6 @@ void CleaningHistory::writeSnapshot(float x, float y, float theta, float time, i
         line += ",\"b\":" + String(brushRPM);
     line += "}";
 
-    noGoGuard.observePose(x, y);
     updateAccumulators(x, y, theta);
     bufferLine(line);
     snapshotCount++;

@@ -28,7 +28,7 @@ WiFiManager wifiManager(prefs, dataLogger);
 FirmwareManager firmwareManager(dataLogger);
 Scheduler scheduler(settingsManager, systemManager, neatoSerial, dataLogger);
 ManualCleanManager manualClean(neatoSerial);
-NoGoGuard noGoGuard(dataLogger);
+NoGoGuard noGoGuard(neatoSerial, dataLogger, settingsManager);
 CleaningHistory cleaningHistory(neatoSerial, dataLogger, systemManager, noGoGuard);
 NotificationManager notifMgr(neatoSerial, settingsManager, dataLogger, cleaningHistory);
 WebServer webServer(server, neatoSerial, dataLogger, systemManager, firmwareManager, settingsManager, manualClean,
@@ -156,7 +156,7 @@ void setup() {
     });
     dataLogger.begin();
 
-    // Load the passive no-go configuration after SPIFFS has mounted.
+    // Load the no-go configuration after SPIFFS has mounted.
     noGoGuard.begin();
 
     // Fetch robot time as fallback clock (parsed from "Time UTC" in GetVersion)

@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.24.0-nogo.4
+
+### Added
+
+* Active no-go enforcement: fresh 250 ms pose polling followed by authenticated
+  pause, immediate wheel stop, 200 mm reverse, turn away, TestMode cleanup, and
+  authenticated resume.
+* One-hour automatic info logging for armed runs, with a logged result for every
+  maneuver transition and failure cleanup.
+* Home Assistant diagnostics for guard stage, last action/result, completed
+  escapes, and failed steps.
+
+### Changed
+
+* The replay card now describes lines as an active guard instead of an observer.
+* The firmware no longer depends on the 2-second history sampler for guard
+  decisions.
+
 ## 1.24.0-nogo.2
 
 ### Added

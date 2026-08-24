@@ -405,7 +405,7 @@ SENSOR_DESCRIPTIONS: tuple[OpenNeatoSensorEntityDescription, ...] = (
             else None
         ),
     ),
-    # ── Passive no-go observer ──────────────────────────────────────────
+    # ── Active no-go guard ─────────────────────────────────────────────
     OpenNeatoSensorEntityDescription(
         key="nogo_distance",
         translation_key="nogo_distance",
@@ -434,6 +434,51 @@ SENSOR_DESCRIPTIONS: tuple[OpenNeatoSensorEntityDescription, ...] = (
         section="nogo",
         field="breachCount",
         icon="mdi:counter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_escape_count",
+        translation_key="nogo_escape_count",
+        name="No-go escapes completed",
+        section="nogo",
+        field="escapeCount",
+        icon="mdi:robot-vacuum-alert",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_failure_count",
+        translation_key="nogo_failure_count",
+        name="No-go failed steps",
+        section="nogo",
+        field="failureCount",
+        icon="mdi:alert-circle-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_stage",
+        translation_key="nogo_stage",
+        name="No-go guard stage",
+        section="nogo",
+        field="stage",
+        icon="mdi:state-machine",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_last_action",
+        translation_key="nogo_last_action",
+        name="No-go last action",
+        section="nogo",
+        field="lastAction",
+        icon="mdi:history",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_last_result",
+        translation_key="nogo_last_result",
+        name="No-go last result",
+        section="nogo",
+        field="lastResult",
+        icon="mdi:check-decagram-outline",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )

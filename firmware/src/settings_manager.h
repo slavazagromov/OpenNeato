@@ -80,6 +80,11 @@ public:
     // Apply a partial update — only fields present in the JSON body are written.
     ApplyResult apply(const String& json);
 
+    // Enable the normal one-hour info capture window without persisting a new
+    // preference. Safety features use this so their transition logs are
+    // available for the current run even when logging was previously off.
+    void enableTemporaryInfoLogging();
+
     // Callback fired when timezone changes (so SystemManager can reconfigure NTP)
     using TzChangeCallback = std::function<void(const String& tz)>;
     void onTzChange(TzChangeCallback cb) { tzChangeCb = cb; }

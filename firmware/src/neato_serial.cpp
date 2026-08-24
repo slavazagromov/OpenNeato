@@ -375,6 +375,12 @@ void NeatoSerial::getRobotPos(bool smooth, std::function<void(bool, const RobotP
     (smooth ? robotPosSmoothCache : robotPosRawCache).get(callback);
 }
 
+void NeatoSerial::getRobotPosFresh(bool smooth, std::function<void(bool, const RobotPosData&)> callback) {
+    AsyncCache<RobotPosData>& cache = smooth ? robotPosSmoothCache : robotPosRawCache;
+    cache.invalidate();
+    cache.get(callback);
+}
+
 // -- Raw fetch methods (enqueue serial command, parse response) ---------------
 
 void NeatoSerial::fetchVersion(std::function<void(bool, const VersionData&)> callback) {
@@ -556,6 +562,14 @@ bool NeatoSerial::clean(const String& action, std::function<void(bool)> callback
     if (action == "stop") {
         invalidateState();
         return enqueue(buildSetEvent(EVT_STOP), wrapAction(callback), PRIORITY_HIGH);
+    }
+
+    // Explicit resume is needed by safety maneuvers after TestMode invalidates
+    // the cached UI state. Unlike the generic action below, it must never turn
+    // into a new house-clean command.
+    if (action == "resume") {
+        invalidateState();
+        return enqueue(buildSetEvent(EVT_RESUME), wrapAction(callback), PRIORITY_HIGH);
     }
 
     // Type-aware resume: "house" only resumes a paused house clean, "spot"

@@ -99,11 +99,11 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[OpenNeatoBinarySensorEntityDescription, ...] =
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    # ── Passive no-go observer ──────────────────────────────────────────
+    # ── Active no-go guard ─────────────────────────────────────────────
     OpenNeatoBinarySensorEntityDescription(
         key="nogo_armed",
         translation_key="nogo_armed",
-        name="No-go observer armed",
+        name="No-go guard armed",
         section="nogo",
         field="armed",
         icon="mdi:shield-outline",

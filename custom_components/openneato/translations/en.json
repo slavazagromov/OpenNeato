@@ -117,6 +117,21 @@
       },
       "nogo_breach_count": {
         "name": "No-go breach count"
+      },
+      "nogo_escape_count": {
+        "name": "No-go escapes completed"
+      },
+      "nogo_failure_count": {
+        "name": "No-go failed steps"
+      },
+      "nogo_stage": {
+        "name": "No-go guard stage"
+      },
+      "nogo_last_action": {
+        "name": "No-go last action"
+      },
+      "nogo_last_result": {
+        "name": "No-go last result"
       }
     },
     "binary_sensor": {
@@ -172,7 +187,7 @@
         "name": "Bumper LDS right"
       },
       "nogo_armed": {
-        "name": "No-go observer armed"
+        "name": "No-go guard armed"
       },
       "nogo_near": {
         "name": "Near no-go line"

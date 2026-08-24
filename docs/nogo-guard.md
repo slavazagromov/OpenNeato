@@ -1,13 +1,32 @@
-# Passive No-Go Guard
+# Active No-Go Guard
 
-This branch is based on the combined Philou95 v1.23.1 tree, so the robot firmware,
-embedded web UI, and Home Assistant custom integration ship from one compatible
-source revision. The HA component version is `1.24.0-nogo.2`.
+This branch combines the Philou95 Home Assistant integration with robot-side
+no-go enforcement. Lines drawn on a completed cleaning map are transformed into
+the robot's dock-relative coordinate frame and stored in `/nogo.json`.
 
-It introduces the first hardware-safe milestone toward local no-go lines.
-It observes the dock-relative pose already collected by cleaning history and reports
-when a pose comes near or crosses configured geometry. It does not send wheel,
-cleaning, pause, stop, or docking commands.
+## Runtime behavior
+
+When no lines are enabled, OpenNeato does not change the normal whole-house
+cleaning or map-creation behavior.
+
+When lines are enabled, the guard starts with each autonomous cleaning run and
+polls fresh localization every 250 ms. At the configured warning distance it:
+
+1. sends the authenticated cleaning pause event;
+2. enters TestMode and immediately disables both wheel motors;
+3. reverses 200 mm at 100 mm/s;
+4. turns about 80 degrees toward the side away from the closest line;
+5. exits TestMode and sends the authenticated resume event.
+
+The guard then waits until the robot is outside the warning distance plus a
+15 cm margin before re-arming. A 30-second ceiling prevents a permanently
+disarmed guard if localization remains frozen.
+
+Every transition is logged at info level as `nogo_trigger`, `nogo_step`,
+`nogo_escape_complete`, `nogo_escape_failed`, or `nogo_rearmed`. Enabling a
+guard or starting an armed run automatically opens the normal one-hour info-log
+window without changing the saved logging preference. `/api/nogo/status` also
+exposes the current stage, last action/result, and trigger/escape/failed-step counts.
 
 ## Configuration
 
@@ -29,47 +48,22 @@ Store a configuration with `PUT /api/nogo/config`:
 }
 ```
 
-- `warningDistance` is in meters and must be between `0.05` and `1.0`.
+- `warningDistance` is in metres and must be between `0.05` and `1.0`.
 - At most 16 polylines and 32 points per polyline are accepted.
 - Configuration is written only when the user explicitly saves it.
-- Pose observation and event latching do not write to flash.
+- Pose polling and maneuver state do not write to flash.
 
-Read the stored configuration with `GET /api/nogo/config` and runtime state with
-`GET /api/nogo/status`. The status exposes `near`, `breached`, counters, last pose,
-and distance to the closest configured line for Home Assistant polling.
+The Home Assistant replay card provides the map editor. The integration also
+exposes armed/near/breached binary sensors plus stage, last action/result,
+distance, trigger, breach, escape, and failed-step sensors.
 
-## Home Assistant
+## Test-run inspection
 
-The bundled `custom_components/openneato` integration polls the status endpoint
-with the robot's existing coordinator and exposes:
+For the first run, draw a line across a clear open area with room for a 20 cm
+reverse and in-place turn. After the run, inspect both `/api/nogo/status` and the
+info log. A successful encounter must contain, in order: trigger, pause,
+TestMode on, stop, reverse, turn, TestMode off, resume, and escape complete.
 
-- binary sensors for observer armed, near a line, and line breached;
-- sensors for closest distance, near count, and breach count;
-- `openneato_nogo_near` and `openneato_nogo_breached` events on new transitions.
-
-The events contain the robot serial, host, last X/Y pose, closest distance, and
-reference session. They are intended for HA notification automations without
-adding another polling bridge.
-
-The bundled replay card also has a **No-go lines** editor. Select a completed
-cleaning, open the editor, tap/click points along each barrier, choose **New
-line** between barriers, switch the observer on, and save. The card draws in
-the accumulated map frame; Home Assistant converts the points to the selected
-reference session's robot frame before writing them to firmware. Existing
-geometry is converted back to the map frame when the card loads.
-
-The editor intentionally says **Observer only**. A future run can still be
-re-zeroed or re-aligned differently from the reference run. The near/breach
-events are how we measure that drift across repeated dock-started mornings
-before allowing any firmware branch to issue an automatic stop.
-
-## Validation stages
-
-1. Upload with the guard disabled and confirm normal boot, web UI, UART, and cleaning.
-2. Record several dock-started cleaning sessions and compare their coordinate frames.
-3. Configure a harmless line in an open room and enable observation mode.
-4. Confirm `near` and `breached` events match the real path.
-5. Only after repeatable frame alignment should a later branch add pause/stop behavior.
-
-The robot's cliff sensors and physical magnetic boundary strips remain the hard
-safety layer. This experimental observer must not be treated as fall protection.
+This is experimental motion-control firmware. Physical cliff sensors and
+magnetic boundary strips remain the hard safety layer; do not use a software
+line as the only barrier at stairs or another fall hazard.

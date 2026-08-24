@@ -260,7 +260,7 @@ class OpenNeatoApiClient:
         return await self._get("/api/history")  # type: ignore[return-value]
 
     async def get_nogo_status(self) -> dict[str, Any]:
-        """Get passive no-go state, tolerating pre-no-go firmware."""
+        """Get no-go guard state, tolerating pre-no-go firmware."""
         return await self._get("/api/nogo/status", allow_not_found=True)
 
     async def get_nogo_config(self) -> dict[str, Any]:
