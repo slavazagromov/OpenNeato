@@ -16,7 +16,10 @@ namespace {
     constexpr unsigned long TURN_MS = 1900;
     constexpr unsigned long COOLDOWN_MIN_MS = 3000;
     constexpr unsigned long COOLDOWN_MAX_MS = 30000;
+    constexpr unsigned long BUTTON_OBSERVE_MS = 1400;
     constexpr float REARM_MARGIN_M = 0.15f;
+    constexpr float LOOKAHEAD_DISTANCE_M = 0.45f;
+    constexpr float BUTTON_AWAY_CONFIRM_M = 0.05f;
     constexpr int REVERSE_DISTANCE_MM = 200;
     constexpr int TURN_WHEEL_DISTANCE_MM = 170;
     constexpr int ESCAPE_SPEED_MM_S = 100;
@@ -107,9 +110,9 @@ bool NoGoGuard::applyConfig(const String& json, String& error) {
     resetRunState();
     if (enabled)
         settingsManager.enableTemporaryInfoLogging();
-    dataLogger.logGenericEvent("nogo_config", { {"enabled", enabled ? "true" : "false", FIELD_BOOL},
-                                                {"segments", String(segments.size()), FIELD_INT},
-                                                {"mode", "enforce", FIELD_STRING} });
+    dataLogger.logGenericEvent("nogo_config", {{"enabled", enabled ? "true" : "false", FIELD_BOOL},
+                                               {"segments", String(segments.size()), FIELD_INT},
+                                               {"mode", "ir_button_with_testmode_fallback", FIELD_STRING}});
     return true;
 }
 
@@ -120,12 +123,16 @@ void NoGoGuard::resetRunState() {
     breachLatched = false;
     testModeEntered = false;
     lastDistanceM = -1.0f;
+    lastProjectedDistanceM = -1.0f;
+    emulationStartDistanceM = -1.0f;
     closestSegment = -1;
+    activeSegment = -1;
     stage = Stage::IDLE;
     lastAction = "idle";
     lastResult = "none";
     stageDeadlineMs = 0;
     cooldownStartedMs = 0;
+    emulationStartedMs = 0;
     testModeOffAttempts = 0;
     resumeAttempts = 0;
 }
@@ -138,9 +145,10 @@ void NoGoGuard::startRun() {
     lastPosePollMs = 0;
     if (enabled && !segments.empty()) {
         settingsManager.enableTemporaryInfoLogging();
-        dataLogger.logGenericEvent("nogo_armed", { {"segments", String(segments.size()), FIELD_INT},
-                                                   {"pollMs", String(POSE_POLL_MS), FIELD_INT},
-                                                   {"warningDistance", String(warningDistanceM, 3), FIELD_FLOAT} });
+        dataLogger.logGenericEvent("nogo_armed", {{"segments", String(segments.size()), FIELD_INT},
+                                                  {"pollMs", String(POSE_POLL_MS), FIELD_INT},
+                                                  {"lookahead", String(LOOKAHEAD_DISTANCE_M, 3), FIELD_FLOAT},
+                                                  {"warningDistance", String(warningDistanceM, 3), FIELD_FLOAT}});
     }
 }
 
@@ -152,10 +160,10 @@ void NoGoGuard::endRun() {
         serial.testMode(false, nullptr);
     }
     if (enabled) {
-        dataLogger.logGenericEvent("nogo_disarmed", { {"triggers", String(nearCount), FIELD_INT},
-                                                      {"breaches", String(breachCount), FIELD_INT},
-                                                      {"escapes", String(escapeCount), FIELD_INT},
-                                                      {"failures", String(failureCount), FIELD_INT} });
+        dataLogger.logGenericEvent("nogo_disarmed", {{"triggers", String(nearCount), FIELD_INT},
+                                                     {"breaches", String(breachCount), FIELD_INT},
+                                                     {"escapes", String(escapeCount), FIELD_INT},
+                                                     {"failures", String(failureCount), FIELD_INT}});
     }
     runActive = false;
     posePending = false;
@@ -180,8 +188,12 @@ void NoGoGuard::tick() {
         sendTestModeOff(false);
         return;
     }
+    if (stage == Stage::BUTTON_OBSERVE && static_cast<long>(now - stageDeadlineMs) >= 0) {
+        beginTestModeFallback("button_no_turn");
+        return;
+    }
 
-    if ((stage == Stage::IDLE || stage == Stage::COOLDOWN) && !posePending &&
+    if ((stage == Stage::IDLE || stage == Stage::BUTTON_OBSERVE || stage == Stage::COOLDOWN) && !posePending &&
         (lastPosePollMs == 0 || now - lastPosePollMs >= POSE_POLL_MS)) {
         pollPose();
     }
@@ -208,32 +220,69 @@ void NoGoGuard::pollPose() {
 void NoGoGuard::observePose(float x, float y, float theta) {
     NoGoPoint current{x, y};
     lastPose = current;
+    NoGoPoint heading{cosf(theta * DEG_TO_RAD), sinf(theta * DEG_TO_RAD)};
+    if (hasPreviousPose) {
+        float dx = current.x - previousPose.x;
+        float dy = current.y - previousPose.y;
+        float length = sqrtf(dx * dx + dy * dy);
+        if (length > 0.01f)
+            heading = {dx / length, dy / length};
+    }
+    NoGoPoint projected{current.x + heading.x * LOOKAHEAD_DISTANCE_M, current.y + heading.y * LOOKAHEAD_DISTANCE_M};
     float closest = -1.0f;
+    float predictedClosest = -1.0f;
     bool crossed = false;
     int nearest = -1;
+    int crossedSegment = -1;
+    int predictedSegment = -1;
     for (size_t i = 0; i < segments.size(); i++) {
         float distance = noGoPointToSegmentDistance(current, segments[i]);
         if (closest < 0.0f || distance < closest) {
             closest = distance;
             nearest = static_cast<int>(i);
         }
-        if (hasPreviousPose && noGoSegmentsIntersect(previousPose, current, segments[i].a, segments[i].b))
+        if (hasPreviousPose && noGoSegmentsIntersect(previousPose, current, segments[i].a, segments[i].b)) {
             crossed = true;
+            crossedSegment = static_cast<int>(i);
+        }
+        if (noGoProjectedApproach(current, projected, segments[i], warningDistanceM)) {
+            float projectedDistance = noGoPointToSegmentDistance(projected, segments[i]);
+            if (predictedClosest < 0.0f || projectedDistance < predictedClosest) {
+                predictedClosest = projectedDistance;
+                predictedSegment = static_cast<int>(i);
+            }
+        }
     }
     lastDistanceM = closest;
+    lastProjectedDistanceM = predictedClosest;
     closestSegment = nearest;
 
-    if (stage == Stage::COOLDOWN) {
+    if (stage == Stage::BUTTON_OBSERVE) {
+        observeButtonResponse(current, projected, crossed);
+    } else if (stage == Stage::COOLDOWN) {
         unsigned long elapsed = millis() - cooldownStartedMs;
-        if ((elapsed >= COOLDOWN_MIN_MS && closest > warningDistanceM + REARM_MARGIN_M) ||
-            elapsed >= COOLDOWN_MAX_MS) {
+        if ((elapsed >= COOLDOWN_MIN_MS && closest > warningDistanceM + REARM_MARGIN_M) || elapsed >= COOLDOWN_MAX_MS) {
             stage = Stage::IDLE;
             nearLatched = false;
             breachLatched = false;
-            dataLogger.logGenericEvent("nogo_rearmed", { {"distance", String(closest, 3), FIELD_FLOAT} });
+            dataLogger.logGenericEvent("nogo_rearmed", {{"distance", String(closest, 3), FIELD_FLOAT}});
         }
-    } else if (stage == Stage::IDLE && closest >= 0.0f && (closest <= warningDistanceM || crossed)) {
-        triggerEscape(closest, crossed);
+    } else if (stage == Stage::IDLE && closest >= 0.0f) {
+        int triggerSegment = -1;
+        bool predicted = false;
+        if (crossed) {
+            triggerSegment = crossedSegment;
+        } else if (closest <= warningDistanceM) {
+            triggerSegment = nearest;
+        } else if (predictedSegment >= 0) {
+            triggerSegment = predictedSegment;
+            predicted = true;
+        }
+        if (triggerSegment >= 0) {
+            float triggerDistance = noGoPointToSegmentDistance(current, segments[triggerSegment]);
+            float projectedDistance = noGoPointToSegmentDistance(projected, segments[triggerSegment]);
+            triggerEscape(triggerDistance, crossed, predicted, projectedDistance, triggerSegment);
+        }
     }
 
     previousPose = current;
@@ -241,7 +290,7 @@ void NoGoGuard::observePose(float x, float y, float theta) {
     hasPreviousPose = true;
 }
 
-void NoGoGuard::triggerEscape(float distance, bool crossed) {
+void NoGoGuard::triggerEscape(float distance, bool crossed, bool predicted, float projectedDistance, int segmentIndex) {
     nearLatched = true;
     nearCount++;
     if (crossed) {
@@ -250,6 +299,7 @@ void NoGoGuard::triggerEscape(float distance, bool crossed) {
     }
     lastEventMs = millis();
 
+    activeSegment = segmentIndex;
     NoGoPoint heading{cosf(previousTheta * DEG_TO_RAD), sinf(previousTheta * DEG_TO_RAD)};
     if (hasPreviousPose) {
         float dx = lastPose.x - previousPose.x;
@@ -258,16 +308,99 @@ void NoGoGuard::triggerEscape(float distance, bool crossed) {
         if (length > 0.01f)
             heading = {dx / length, dy / length};
     }
-    NoGoPoint nearestPoint = closestPointOnSegment(lastPose, segments[closestSegment]);
+    NoGoPoint nearestPoint = closestPointOnSegment(lastPose, segments[activeSegment]);
     NoGoPoint away{lastPose.x - nearestPoint.x, lastPose.y - nearestPoint.y};
+    float awayLength = sqrtf(away.x * away.x + away.y * away.y);
+    if (awayLength > 0.001f)
+        escapeAway = {away.x / awayLength, away.y / awayLength};
+    else
+        escapeAway = {-heading.x, -heading.y};
     turnDirection = heading.x * away.y - heading.y * away.x >= 0.0f ? 1 : -1;
 
-    dataLogger.logGenericEvent("nogo_trigger", { {"x", String(lastPose.x, 3), FIELD_FLOAT},
-                                                 {"y", String(lastPose.y, 3), FIELD_FLOAT},
-                                                 {"distance", String(distance, 3), FIELD_FLOAT},
-                                                 {"segment", String(closestSegment), FIELD_INT},
-                                                 {"crossed", crossed ? "true" : "false", FIELD_BOOL},
-                                                 {"turn", turnDirection > 0 ? "left" : "right", FIELD_STRING} });
+    dataLogger.logGenericEvent("nogo_trigger", {{"x", String(lastPose.x, 3), FIELD_FLOAT},
+                                                {"y", String(lastPose.y, 3), FIELD_FLOAT},
+                                                {"distance", String(distance, 3), FIELD_FLOAT},
+                                                {"projectedDistance", String(projectedDistance, 3), FIELD_FLOAT},
+                                                {"segment", String(activeSegment), FIELD_INT},
+                                                {"crossed", crossed ? "true" : "false", FIELD_BOOL},
+                                                {"predicted", predicted ? "true" : "false", FIELD_BOOL},
+                                                {"turn", turnDirection > 0 ? "left" : "right", FIELD_STRING}});
+    emulationStartPose = lastPose;
+    emulationStartHeading = heading;
+    emulationStartDistanceM = distance;
+    sendButtonEmulation();
+}
+
+void NoGoGuard::sendButtonEmulation() {
+    stage = Stage::BUTTON_PENDING;
+    buttonAttemptCount++;
+    const char *button = turnDirection > 0 ? "IRleft" : "IRright";
+    lastAction = button;
+    bool queued = serial.setButton(button, [this, button](bool ok) {
+        logStep(button, ok, {{"attempt", String(buttonAttemptCount), FIELD_INT}});
+        if (!ok) {
+            beginTestModeFallback("button_rejected");
+            return;
+        }
+        stage = Stage::BUTTON_OBSERVE;
+        emulationStartedMs = millis();
+        stageDeadlineMs = emulationStartedMs + BUTTON_OBSERVE_MS;
+        lastPosePollMs = 0;
+    });
+    if (!queued)
+        beginTestModeFallback("button_queue");
+}
+
+void NoGoGuard::observeButtonResponse(const NoGoPoint& current, const NoGoPoint& projected, bool crossed) {
+    if (activeSegment < 0 || activeSegment >= static_cast<int>(segments.size())) {
+        beginTestModeFallback("button_segment");
+        return;
+    }
+    float distance = noGoPointToSegmentDistance(current, segments[activeSegment]);
+    float dx = current.x - emulationStartPose.x;
+    float dy = current.y - emulationStartPose.y;
+    float moved = sqrtf(dx * dx + dy * dy);
+    float awayTravel = dx * escapeAway.x + dy * escapeAway.y;
+    NoGoPoint currentHeading{(projected.x - current.x) / LOOKAHEAD_DISTANCE_M,
+                             (projected.y - current.y) / LOOKAHEAD_DISTANCE_M};
+    float headingDot = constrain(
+            emulationStartHeading.x * currentHeading.x + emulationStartHeading.y * currentHeading.y, -1.0f, 1.0f);
+    float headingDeltaDegrees = acosf(headingDot) * RAD_TO_DEG;
+    bool stillApproaching = noGoProjectedApproach(current, projected, segments[activeSegment], warningDistanceM);
+
+    if (crossed || distance <= 0.03f) {
+        beginTestModeFallback(crossed ? "button_crossed" : "button_too_close");
+        return;
+    }
+    if (awayTravel >= BUTTON_AWAY_CONFIRM_M || (!stillApproaching && distance >= emulationStartDistanceM - 0.02f &&
+                                                (moved >= BUTTON_AWAY_CONFIRM_M || headingDeltaDegrees >= 15.0f))) {
+        completeButtonEscape(distance, awayTravel, headingDeltaDegrees);
+    }
+}
+
+void NoGoGuard::completeButtonEscape(float distance, float awayTravel, float headingDeltaDegrees) {
+    buttonSuccessCount++;
+    escapeCount++;
+    lastAction = "button_escape_complete";
+    lastResult = "ok";
+    lastEventMs = millis();
+    dataLogger.logGenericEvent("nogo_button_escape",
+                               {{"distance", String(distance, 3), FIELD_FLOAT},
+                                {"awayTravel", String(awayTravel, 3), FIELD_FLOAT},
+                                {"headingDelta", String(headingDeltaDegrees, 1), FIELD_FLOAT},
+                                {"elapsedMs", String(lastEventMs - emulationStartedMs), FIELD_INT},
+                                {"count", String(buttonSuccessCount), FIELD_INT}});
+    stage = Stage::COOLDOWN;
+    cooldownStartedMs = millis();
+    lastPosePollMs = 0;
+}
+
+void NoGoGuard::beginTestModeFallback(const char *reason) {
+    if (stage != Stage::BUTTON_PENDING && stage != Stage::BUTTON_OBSERVE)
+        return;
+    fallbackCount++;
+    dataLogger.logGenericEvent("nogo_button_fallback",
+                               {{"reason", reason, FIELD_STRING}, {"count", String(fallbackCount), FIELD_INT}});
     sendPause();
 }
 
@@ -347,7 +480,7 @@ void NoGoGuard::sendReverse() {
     stage = Stage::REVERSE_PENDING;
     lastAction = "reverse";
     serial.setMotorWheels(-REVERSE_DISTANCE_MM, -REVERSE_DISTANCE_MM, ESCAPE_SPEED_MM_S, [this](bool ok) {
-        logStep("reverse", ok, { {"mm", String(REVERSE_DISTANCE_MM), FIELD_INT} });
+        logStep("reverse", ok, {{"mm", String(REVERSE_DISTANCE_MM), FIELD_INT}});
         if (!ok) {
             failStage("reverse");
             return;
@@ -363,8 +496,9 @@ void NoGoGuard::sendTurn() {
     int left = turnDirection > 0 ? -TURN_WHEEL_DISTANCE_MM : TURN_WHEEL_DISTANCE_MM;
     int right = -left;
     serial.setMotorWheels(left, right, ESCAPE_SPEED_MM_S, [this](bool ok) {
-        logStep("turn", ok, { {"direction", turnDirection > 0 ? "left" : "right", FIELD_STRING},
-                              {"wheelMm", String(TURN_WHEEL_DISTANCE_MM), FIELD_INT} });
+        logStep("turn", ok,
+                {{"direction", turnDirection > 0 ? "left" : "right", FIELD_STRING},
+                 {"wheelMm", String(TURN_WHEEL_DISTANCE_MM), FIELD_INT}});
         if (!ok) {
             failStage("turn");
             return;
@@ -379,8 +513,9 @@ void NoGoGuard::sendTestModeOff(bool aborting) {
     lastAction = "testmode_off";
     testModeOffAttempts++;
     serial.testMode(false, [this, aborting](bool ok) {
-        logStep("testmode_off", ok, { {"aborting", aborting ? "true" : "false", FIELD_BOOL},
-                                      {"attempt", String(testModeOffAttempts), FIELD_INT} });
+        logStep("testmode_off", ok,
+                {{"aborting", aborting ? "true" : "false", FIELD_BOOL},
+                 {"attempt", String(testModeOffAttempts), FIELD_INT}});
         if (!ok && testModeOffAttempts < 2) {
             sendTestModeOff(aborting);
             return;
@@ -403,8 +538,9 @@ void NoGoGuard::sendResume(bool aborting) {
     lastAction = "resume";
     resumeAttempts++;
     serial.clean("resume", [this, aborting](bool ok) {
-        logStep("resume", ok, { {"aborting", aborting ? "true" : "false", FIELD_BOOL},
-                                {"attempt", String(resumeAttempts), FIELD_INT} });
+        logStep("resume", ok,
+                {{"aborting", aborting ? "true" : "false", FIELD_BOOL},
+                 {"attempt", String(resumeAttempts), FIELD_INT}});
         if (!ok && resumeAttempts < 2) {
             sendResume(aborting);
             return;
@@ -413,7 +549,7 @@ void NoGoGuard::sendResume(bool aborting) {
             escapeCount++;
             lastAction = "escape_complete";
             lastResult = "ok";
-            dataLogger.logGenericEvent("nogo_escape_complete", { {"count", String(escapeCount), FIELD_INT} });
+            dataLogger.logGenericEvent("nogo_escape_complete", {{"count", String(escapeCount), FIELD_INT}});
         } else if (!ok) {
             failureCount++;
         }
@@ -427,8 +563,8 @@ void NoGoGuard::failStage(const char *action) {
     failureCount++;
     lastAction = action;
     lastResult = "fail";
-    dataLogger.logGenericEvent("nogo_escape_failed", { {"action", action, FIELD_STRING},
-                                                       {"testMode", testModeEntered ? "true" : "false", FIELD_BOOL} });
+    dataLogger.logGenericEvent("nogo_escape_failed", {{"action", action, FIELD_STRING},
+                                                      {"testMode", testModeEntered ? "true" : "false", FIELD_BOOL}});
     if (testModeEntered) {
         serial.setMotorWheels(0, 0, 0, [this](bool) { sendTestModeOff(true); });
     } else {
@@ -440,51 +576,72 @@ void NoGoGuard::logStep(const char *action, bool ok, const std::vector<Field>& e
     lastAction = action;
     lastResult = ok ? "ok" : "fail";
     lastEventMs = millis();
-    std::vector<Field> fields = { {"action", action, FIELD_STRING},
-                                  {"status", ok ? "ok" : "fail", FIELD_STRING} };
+    std::vector<Field> fields = {{"action", action, FIELD_STRING}, {"status", ok ? "ok" : "fail", FIELD_STRING}};
     fields.insert(fields.end(), extra.begin(), extra.end());
     dataLogger.logGenericEvent("nogo_step", fields);
 }
 
 const char *NoGoGuard::stageName() const {
     switch (stage) {
-        case Stage::IDLE: return "idle";
-        case Stage::PAUSE_PENDING: return "pause";
-        case Stage::TESTMODE_ON_PENDING: return "testmode_on";
-        case Stage::CLEANING_MOTORS_PENDING: return "cleaning_motors";
-        case Stage::STOP_PENDING: return "stop";
-        case Stage::REVERSE_PENDING: return "reverse";
-        case Stage::REVERSE_WAIT: return "reverse_wait";
-        case Stage::TURN_PENDING: return "turn";
-        case Stage::TURN_WAIT: return "turn_wait";
-        case Stage::TESTMODE_OFF_PENDING: return "testmode_off";
-        case Stage::RESUME_PENDING: return "resume";
-        case Stage::COOLDOWN: return "cooldown";
-        case Stage::ABORT_TESTMODE_OFF_PENDING: return "abort_testmode_off";
-        case Stage::ABORT_RESUME_PENDING: return "abort_resume";
+        case Stage::IDLE:
+            return "idle";
+        case Stage::BUTTON_PENDING:
+            return "button_pending";
+        case Stage::BUTTON_OBSERVE:
+            return "button_observe";
+        case Stage::PAUSE_PENDING:
+            return "pause";
+        case Stage::TESTMODE_ON_PENDING:
+            return "testmode_on";
+        case Stage::CLEANING_MOTORS_PENDING:
+            return "cleaning_motors";
+        case Stage::STOP_PENDING:
+            return "stop";
+        case Stage::REVERSE_PENDING:
+            return "reverse";
+        case Stage::REVERSE_WAIT:
+            return "reverse_wait";
+        case Stage::TURN_PENDING:
+            return "turn";
+        case Stage::TURN_WAIT:
+            return "turn_wait";
+        case Stage::TESTMODE_OFF_PENDING:
+            return "testmode_off";
+        case Stage::RESUME_PENDING:
+            return "resume";
+        case Stage::COOLDOWN:
+            return "cooldown";
+        case Stage::ABORT_TESTMODE_OFF_PENDING:
+            return "abort_testmode_off";
+        case Stage::ABORT_RESUME_PENDING:
+            return "abort_resume";
     }
     return "unknown";
 }
 
 String NoGoGuard::getStatusJson() const {
-    return fieldsToJson({ {"mode", "enforce", FIELD_STRING},
-                          {"enabled", enabled ? "true" : "false", FIELD_BOOL},
-                          {"runActive", runActive ? "true" : "false", FIELD_BOOL},
-                          {"armed", enabled && runActive && !segments.empty() ? "true" : "false", FIELD_BOOL},
-                          {"near", nearLatched ? "true" : "false", FIELD_BOOL},
-                          {"breached", breachLatched ? "true" : "false", FIELD_BOOL},
-                          {"nearCount", String(nearCount), FIELD_INT},
-                          {"breachCount", String(breachCount), FIELD_INT},
-                          {"escapeCount", String(escapeCount), FIELD_INT},
-                          {"failureCount", String(failureCount), FIELD_INT},
-                          {"segments", String(segments.size()), FIELD_INT},
-                          {"stage", stageName(), FIELD_STRING},
-                          {"lastAction", lastAction, FIELD_STRING},
-                          {"lastResult", lastResult, FIELD_STRING},
-                          {"warningDistance", String(warningDistanceM, 3), FIELD_FLOAT},
-                          {"lastDistance", String(lastDistanceM, 3), FIELD_FLOAT},
-                          {"lastX", String(lastPose.x, 3), FIELD_FLOAT},
-                          {"lastY", String(lastPose.y, 3), FIELD_FLOAT},
-                          {"lastEventMs", String(lastEventMs), FIELD_INT},
-                          {"referenceSession", referenceSession, FIELD_STRING} });
+    return fieldsToJson({{"mode", "ir_button_with_testmode_fallback", FIELD_STRING},
+                         {"enabled", enabled ? "true" : "false", FIELD_BOOL},
+                         {"runActive", runActive ? "true" : "false", FIELD_BOOL},
+                         {"armed", enabled && runActive && !segments.empty() ? "true" : "false", FIELD_BOOL},
+                         {"near", nearLatched ? "true" : "false", FIELD_BOOL},
+                         {"breached", breachLatched ? "true" : "false", FIELD_BOOL},
+                         {"nearCount", String(nearCount), FIELD_INT},
+                         {"breachCount", String(breachCount), FIELD_INT},
+                         {"escapeCount", String(escapeCount), FIELD_INT},
+                         {"failureCount", String(failureCount), FIELD_INT},
+                         {"buttonAttemptCount", String(buttonAttemptCount), FIELD_INT},
+                         {"buttonSuccessCount", String(buttonSuccessCount), FIELD_INT},
+                         {"fallbackCount", String(fallbackCount), FIELD_INT},
+                         {"segments", String(segments.size()), FIELD_INT},
+                         {"stage", stageName(), FIELD_STRING},
+                         {"lastAction", lastAction, FIELD_STRING},
+                         {"lastResult", lastResult, FIELD_STRING},
+                         {"warningDistance", String(warningDistanceM, 3), FIELD_FLOAT},
+                         {"lastDistance", String(lastDistanceM, 3), FIELD_FLOAT},
+                         {"lastProjectedDistance", String(lastProjectedDistanceM, 3), FIELD_FLOAT},
+                         {"lastX", String(lastPose.x, 3), FIELD_FLOAT},
+                         {"lastY", String(lastPose.y, 3), FIELD_FLOAT},
+                         {"lastEventMs", String(lastEventMs), FIELD_INT},
+                         {"referenceSession", referenceSession, FIELD_STRING}});
 }

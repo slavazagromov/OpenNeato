@@ -72,4 +72,12 @@ inline float noGoPointToSegmentDistance(const NoGoPoint& p, const NoGoSegment& s
     return sqrtf(px * px + py * py);
 }
 
+inline bool noGoProjectedApproach(const NoGoPoint& current, const NoGoPoint& projected, const NoGoSegment& segment,
+                                  float warningDistance) {
+    float currentDistance = noGoPointToSegmentDistance(current, segment);
+    float projectedDistance = noGoPointToSegmentDistance(projected, segment);
+    return noGoSegmentsIntersect(current, projected, segment.a, segment.b) ||
+           (projectedDistance <= warningDistance && projectedDistance + 0.01f < currentDistance);
+}
+
 #endif // NOGO_GEOMETRY_H

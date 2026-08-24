@@ -36,5 +36,10 @@ int main() {
     check(closeTo(noGoPointToSegmentDistance({3.0f, 0.0f}, wall), 1.0f), "endpoint distance");
     check(closeTo(noGoPointToSegmentDistance({1.0f, 0.0f}, wall), 0.0f), "point on wall");
 
+    check(noGoProjectedApproach({1.0f, 0.7f}, {1.0f, 0.1f}, wall, 0.2f), "projected approach");
+    check(!noGoProjectedApproach({1.0f, 0.1f}, {1.0f, 0.7f}, wall, 0.2f), "projected retreat");
+    check(!noGoProjectedApproach({0.5f, 0.7f}, {1.5f, 0.7f}, wall, 0.2f), "parallel projection clear");
+    check(noGoProjectedApproach({1.0f, 0.3f}, {1.0f, -0.3f}, wall, 0.2f), "projected crossing");
+
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

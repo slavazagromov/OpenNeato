@@ -101,8 +101,7 @@ void NotificationManager::checkTransitions() {
                         // Cleaning completed: cleaning/docking -> idle, but NOT if it's a recharge.
                         // Also handle suspended -> idle (user stops clean while recharging).
                         bool dockingDone = wasDocking && wasCleaningBeforeDock && !isRecharging;
-                        bool suspendedDone =
-                                (prevUiState.indexOf("CLEANINGSUSPENDED") >= 0) && wasCleaningBeforeDock;
+                        bool suspendedDone = (prevUiState.indexOf("CLEANINGSUSPENDED") >= 0) && wasCleaningBeforeDock;
                         if ((wasCleaning || dockingDone || suspendedDone) && isIdle && cfg.ntfyOnDone && !donePending) {
                             // Defer the send: CleaningHistory::stopCollection finalizes stats
                             // inside an async getCharger callback, so reading getLastCleanStats()

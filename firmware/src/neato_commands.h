@@ -47,6 +47,7 @@
 #define CMD_GET_USER_SETTINGS "GetUserSettings"
 #define CMD_SET_USER_SETTINGS "SetUserSettings"
 #define CMD_SET_NAVIGATION_MODE "SetNavigationMode"
+#define CMD_SET_BUTTON "SetButton"
 #define CMD_NEW_BATTERY "NewBattery"
 
 // -- Sound IDs ---------------------------------------------------------------
