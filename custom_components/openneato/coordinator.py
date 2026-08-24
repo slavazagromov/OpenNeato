@@ -83,7 +83,11 @@ class OpenNeatoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.api.get_user_settings(),
             self.api.get_system(),
             self.api.get_settings(),
-            self.api.get_motors(),
+            # The D5 firmware can leave /api/motors pending indefinitely.
+            # Repeated timed-out requests corrupt the ESP32 HTTP connection and
+            # make later control commands fail with "Server disconnected".
+            # Motor telemetry stays unavailable until the firmware endpoint is
+            # made non-blocking; robot control and maps take priority.
             self.api.get_history(),
             self.api.get_sensors(),
             self.api.get_battery_analog(),
@@ -94,7 +98,7 @@ class OpenNeatoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         keys = (
             "state", "charger", "error", "user_settings",
-            "system", "settings", "motors", "history", "sensors",
+            "system", "settings", "history", "sensors",
             "analog", "warranty", "nogo",
         )
         # Critical endpoints — if ALL of these fail we consider the robot
