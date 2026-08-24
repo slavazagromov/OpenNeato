@@ -12,10 +12,10 @@ class NeatoSerial;
 class SettingsManager;
 
 // Active no-go guard. During an autonomous cleaning run it samples the
-// dock-relative robot pose independently of history recording. It first tries
-// a legacy IR remote turn command while native cleaning remains active. If the
-// pose does not confirm that the robot turned away, it falls back to the
-// TestMode reverse/turn maneuver.
+// dock-relative robot pose independently of history recording. On approach to
+// a configured segment it preserves the cleaning motors, performs a
+// bumper-style reverse and turn in TestMode, exits TestMode, and explicitly
+// resumes the same clean.
 class NoGoGuard : public LoopTask {
 public:
     NoGoGuard(NeatoSerial& serial, DataLogger& logger, SettingsManager& settings);
@@ -32,8 +32,6 @@ public:
 private:
     enum class Stage : uint8_t {
         IDLE,
-        BUTTON_PENDING,
-        BUTTON_OBSERVE,
         PAUSE_PENDING,
         TESTMODE_ON_PENDING,
         CLEANING_MOTORS_PENDING,
@@ -64,16 +62,10 @@ private:
     bool testModeEntered = false;
     NoGoPoint previousPose;
     NoGoPoint lastPose;
-    NoGoPoint emulationStartPose;
-    NoGoPoint emulationStartHeading;
-    NoGoPoint escapeAway;
     float previousTheta = 0.0f;
     float warningDistanceM = 0.20f;
     float lastDistanceM = -1.0f;
     float lastProjectedDistanceM = -1.0f;
-    float emulationStartDistanceM = -1.0f;
-    int closestSegment = -1;
-    int activeSegment = -1;
     int turnDirection = 1;
     Stage stage = Stage::IDLE;
     String lastAction = "idle";
@@ -81,15 +73,11 @@ private:
     unsigned long lastPosePollMs = 0;
     unsigned long stageDeadlineMs = 0;
     unsigned long cooldownStartedMs = 0;
-    unsigned long emulationStartedMs = 0;
     unsigned long lastEventMs = 0;
     unsigned int nearCount = 0;
     unsigned int breachCount = 0;
     unsigned int escapeCount = 0;
     unsigned int failureCount = 0;
-    unsigned int buttonAttemptCount = 0;
-    unsigned int buttonSuccessCount = 0;
-    unsigned int fallbackCount = 0;
     uint8_t testModeOffAttempts = 0;
     uint8_t resumeAttempts = 0;
 
@@ -99,10 +87,6 @@ private:
     void pollPose();
     void observePose(float x, float y, float theta);
     void triggerEscape(float distance, bool crossed, bool predicted, float projectedDistance, int segmentIndex);
-    void sendButtonEmulation();
-    void observeButtonResponse(const NoGoPoint& current, const NoGoPoint& projected, bool crossed);
-    void completeButtonEscape(float distance, float awayTravel, float headingDeltaDegrees);
-    void beginTestModeFallback(const char *reason);
     void sendPause();
     void sendTestModeOn();
     void sendVacuumOn();

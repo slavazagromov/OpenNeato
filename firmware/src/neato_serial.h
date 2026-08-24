@@ -75,10 +75,6 @@ public:
     bool setMotorVacuum(bool on, int speedPercent = 80, std::function<void(bool)> callback = nullptr);
     bool setMotorSideBrush(bool on, int powerMw = 5000, std::function<void(bool)> callback = nullptr);
 
-    // Simulate one of the robot's legacy IR remote buttons without entering
-    // TestMode. The no-go guard currently uses only "IRleft" and "IRright".
-    bool setButton(const String& button, std::function<void(bool)> callback = nullptr);
-
     // Set a single robot user setting via "SetUserSettings <key> <value>".
     // Invalidates the user settings cache.
     bool setUserSetting(const String& key, const String& value, std::function<void(bool)> callback = nullptr);

@@ -725,23 +725,6 @@ bool NeatoSerial::setMotorSideBrush(bool on, int powerMw, std::function<void(boo
             PRIORITY_MEDIUM);
 }
 
-bool NeatoSerial::setButton(const String& button, std::function<void(bool)> callback) {
-    if (button != "IRleft" && button != "IRright") {
-        if (callback)
-            callback(false);
-        return false;
-    }
-    return enqueue(
-            String(CMD_SET_BUTTON) + " " + button,
-            [callback](bool ok, const String& response) {
-                if (ok && response.indexOf("Unrecognized Option") >= 0)
-                    ok = false;
-                if (callback)
-                    callback(ok);
-            },
-            PRIORITY_CRITICAL);
-}
-
 // -- User settings -----------------------------------------------------------
 
 bool NeatoSerial::setUserSetting(const String& key, const String& value, std::function<void(bool)> callback) {

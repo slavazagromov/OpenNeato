@@ -96,8 +96,20 @@ class OpenNeatoVacuum(OpenNeatoEntity, StateVacuumEntity):
         state_data = self.coordinator.data.get("state", {})
         charger_data = self.coordinator.data.get("charger", {})
         error_data = self.coordinator.data.get("error", {})
+        nogo_data = self.coordinator.data.get("nogo", {})
 
         ui_state = state_data.get("uiState", "")
+
+        # A software no-go escape temporarily pauses native cleaning and enters
+        # TestMode to reverse and turn. It is still the same cleaning session.
+        # Keep HA's vacuum entity at CLEANING throughout the maneuver/cooldown
+        # so state-triggered automations do not announce another clean start.
+        if (
+            isinstance(nogo_data, dict)
+            and nogo_data.get("runActive")
+            and nogo_data.get("stage") not in (None, "", "idle")
+        ):
+            return VacuumActivity.CLEANING
 
         # What the robot is *doing* outranks what it is *complaining about*.
         #

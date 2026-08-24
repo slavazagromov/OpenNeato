@@ -10,7 +10,9 @@ When no lines are enabled, OpenNeato does not change the normal whole-house
 cleaning or map-creation behavior.
 
 When lines are enabled, the guard starts with each autonomous cleaning run and
-polls fresh localization every 250 ms. At the configured warning distance it:
+polls fresh localization every 250 ms. Using a 45 cm projected look-ahead, it
+starts the maneuver at the configured warning distance before the robot crosses
+the line. It:
 
 1. sends the authenticated cleaning pause event;
 2. enters TestMode and immediately disables both wheel motors;
@@ -21,6 +23,12 @@ polls fresh localization every 250 ms. At the configured warning distance it:
 The guard then waits until the robot is outside the warning distance plus a
 15 cm margin before re-arming. A 30-second ceiling prevents a permanently
 disarmed guard if localization remains frozen.
+
+The earlier `SetButton IRleft` / `IRright` experiment was removed. Robot logs
+showed that those commands were acknowledged but did not change any physical
+bumper sensor bit or steer the native cleaner; waiting for them only delayed
+the proven reverse/turn maneuver and could produce a false success from a
+stale heading estimate.
 
 Every transition is logged at info level as `nogo_trigger`, `nogo_step`,
 `nogo_escape_complete`, `nogo_escape_failed`, or `nogo_rearmed`. Enabling a
@@ -53,7 +61,9 @@ Store a configuration with `PUT /api/nogo/config`:
 - Configuration is written only when the user explicitly saves it.
 - Pose polling and maneuver state do not write to flash.
 
-The Home Assistant replay card provides the map editor. The integration also
+The Home Assistant replay card provides the map editor. During a no-go escape,
+the vacuum entity remains `cleaning` so state-triggered automations do not emit
+duplicate "started cleaning" notifications. The integration also
 exposes armed/near/breached binary sensors plus stage, last action/result,
 distance, trigger, breach, escape, and failed-step sensors.
 
