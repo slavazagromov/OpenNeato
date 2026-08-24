@@ -17,7 +17,7 @@ from .const import MAX_HISTORY_RESPONSE_BYTES, SESSION_NAME_PATTERN
 
 _LOGGER = logging.getLogger(__name__)
 
-TIMEOUT = 30  # seconds — ESP32 can be slow when serial queue is busy
+TIMEOUT = 20  # seconds — stays below HA's 30s config-entry setup window
 
 _SESSION_NAME_RE = re.compile(SESSION_NAME_PATTERN)
 
