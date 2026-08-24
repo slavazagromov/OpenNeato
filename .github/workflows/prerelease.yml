@@ -6,9 +6,11 @@ on:
       pr_number:
         description: "PR number (leave empty for branch-only prerelease)"
         required: false
+        type: string
       comment_id:
         description: "Comment ID for reply (set by slash-command dispatcher)"
         required: false
+        type: string
 
 permissions:
   contents: write
