@@ -104,7 +104,69 @@ void WebServer::registerNoGoRoutes() {
         return 200;
     });
 
-    LOG("WEB", "Passive no-go guard routes registered");
+    // Stationary wiring test. The selected PhotoMOS output is asserted before
+    // a fresh high-priority robot sensor read, then released immediately. The
+    // timer in NoGoGuard is an independent failsafe if the UART read times out.
+    server.on("/api/nogo/bumper-test", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        lastApiActivity = millis();
+        unsigned long startMs = lastApiActivity;
+        if (!request->hasParam("channel")) {
+            logger.logRequest(HTTP_POST, "/api/nogo/bumper-test", 400, millis() - startMs);
+            sendError(request, 400, "missing channel");
+            return;
+        }
+
+        String channel = request->getParam("channel")->value();
+        uint8_t requestedMask = 0;
+        String error;
+        if (!noGoGuard.startBumperTest(channel, requestedMask, error)) {
+            int status = noGoGuard.physicalBumpersAvailable() ? 409 : 501;
+            if (error.startsWith("unknown channel"))
+                status = 400;
+            logger.logRequest(HTTP_POST, "/api/nogo/bumper-test", status, millis() - startMs);
+            sendError(request, status, error);
+            return;
+        }
+
+        auto weak = request->pause();
+        neato.getDigitalSensors(
+                [this, weak, startMs, channel, requestedMask](bool ok, const DigitalSensorData& sensors) {
+                    uint8_t detectedMask = 0;
+                    if (sensors.lSideBit)
+                        detectedMask |= NoGoGuard::BUMPER_LEFT_WHISKER;
+                    if (sensors.lFrontBit)
+                        detectedMask |= NoGoGuard::BUMPER_LEFT_FRONT;
+                    if (sensors.rFrontBit)
+                        detectedMask |= NoGoGuard::BUMPER_RIGHT_FRONT;
+                    if (sensors.rSideBit)
+                        detectedMask |= NoGoGuard::BUMPER_RIGHT_WHISKER;
+                    noGoGuard.finishBumperTest(requestedMask, detectedMask, ok);
+
+                    if (auto req = weak.lock()) {
+                        unsigned long elapsed = millis() - startMs;
+                        if (!ok) {
+                            logger.logRequest(HTTP_POST, "/api/nogo/bumper-test", 504, elapsed);
+                            sendError(req.get(), 504, "robot sensor read timed out");
+                            return;
+                        }
+                        bool detected = (detectedMask & requestedMask) == requestedMask;
+                        logger.logRequest(HTTP_POST, "/api/nogo/bumper-test", 200, elapsed);
+                        req->send(200, "application/json",
+                                  fieldsToJson({{"ok", "true", FIELD_BOOL},
+                                                {"channel", channel, FIELD_STRING},
+                                                {"requestedMask", String(requestedMask), FIELD_INT},
+                                                {"detectedMask", String(detectedMask), FIELD_INT},
+                                                {"detected", detected ? "true" : "false", FIELD_BOOL},
+                                                {"lSideBit", sensors.lSideBit ? "true" : "false", FIELD_BOOL},
+                                                {"lFrontBit", sensors.lFrontBit ? "true" : "false", FIELD_BOOL},
+                                                {"rFrontBit", sensors.rFrontBit ? "true" : "false", FIELD_BOOL},
+                                                {"rSideBit", sensors.rSideBit ? "true" : "false", FIELD_BOOL}}));
+                    }
+                },
+                PRIORITY_HIGH);
+    });
+
+    LOG("WEB", "Active no-go guard routes registered");
 }
 
 void WebServer::registerApiRoutes() {

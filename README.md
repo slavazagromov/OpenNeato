@@ -1,35 +1,67 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/Leicas/OpenNeato)](https://github.com/Leicas/OpenNeato/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/slavazagromov/OpenNeato)](https://github.com/slavazagromov/OpenNeato/releases/latest)
 [![Upstream](https://img.shields.io/badge/upstream-renjfk%2FOpenNeato-blue)](https://github.com/renjfk/OpenNeato)
 
 <p align="center">
  <img width="192" alt="OpenNeato Icon" src="frontend/public/icon-192.png">
 </p>
 
-# OpenNeato — Home Assistant fork
+# OpenNeato — Home Assistant and active no-go fork
 
-**This is a [Leicas/OpenNeato](https://github.com/Leicas/OpenNeato) fork focused on the Home Assistant
-integration.** The HACS-installable integration under
-[`custom_components/openneato/`](custom_components/openneato/) is the reason this fork exists — it turns the
-upstream ESP32 bridge into a full HA device with vacuum / camera / sensor / switch / button entities, no YAML.
+This repository combines two OpenNeato code lines into one project:
+
+1. [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato), which supplies the ESP32 robot bridge, local web
+   interface, firmware, and flash tool; and
+2. the Home Assistant-focused [Leicas/OpenNeato](https://github.com/Leicas/OpenNeato) fork, including the
+   HACS integration under [`custom_components/openneato/`](custom_components/openneato/).
+
+The combined project adds an active no-go guard, Home Assistant map editor, robot-side enforcement, status
+telemetry, and a stationary hardware test panel. The custom no-go implementation and integration glue were
+read, reviewed, and rewritten by **OpenAI Codex**, working with the repository owner. This statement applies
+to this fork's custom work; the original upstream projects retain their own authorship and licenses.
+
+> [!WARNING]
+> **Hardware validation is pending.** Firmware `1.24.0-nogo.6-physical-test1` builds successfully, but the
+> four-channel PhotoMOS wiring and moving no-go response have not yet completed on-robot validation. Treat
+> this branch as experimental. Never use a software no-go line as the only protection at stairs or another
+> fall hazard.
+
+## Four-channel physical bumper interface
+
+The original ESP32 WROOM32 build drives four normally-open Omron G3VM-61A1 PhotoMOS relays. Each relay input
+is wired from its ESP32 GPIO through a **330 ohm series resistor**, with pin 2 returning to any ESP32 GND.
+The isolated relay output (pins 3 and 4, no polarity) is placed in parallel with the corresponding Neato
+bumper/whisker switch. A 300 ms pulse therefore looks like a real bumper hit to the robot's native cleaner.
+
+Directions below are from the robot's perspective while driving forward:
+
+| Robot contact | ESP32 GPIO | PhotoMOS input wiring | Robot sensor bit |
+| --- | ---: | --- | --- |
+| Left outer whisker | 25 | GPIO25 → 330 Ω → pin 1; pin 2 → GND | `lSideBit` |
+| Left inner/front bumper | 26 | GPIO26 → 330 Ω → pin 1; pin 2 → GND | `lFrontBit` |
+| Right inner/front bumper | 27 | GPIO27 → 330 Ω → pin 1; pin 2 → GND | `rFrontBit` |
+| Right outer whisker | 14 | GPIO14 → 330 Ω → pin 1; pin 2 → GND | `rSideBit` |
+
+For full behavior, API endpoints, safeguards, and the test sequence, see
+[`docs/nogo-guard.md`](docs/nogo-guard.md). Test each channel while the robot is charged, idle, and docked via
+**Settings → Diagnostics → Physical bumper wiring** before attempting a moving no-go test.
 
 > [!IMPORTANT]
-> **If you want the standalone web UI**, use upstream [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato)
-> directly — it has the original maintainer, the release cadence, and the live demo.
+> **If you want the stable standalone web UI without this experimental hardware**, use upstream
+> [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato) directly — it has the original maintainer, release
+> cadence, and live demo.
 >
-> **Use this fork if** you run Home Assistant and want the robot exposed as a first-class HA device. Firmware
-> changes in this fork are minor and exist only to support the integration (e.g. `/api/sensors`,
-> `/api/history` hardening, ntfy server/token/on-start extensions). The firmware, frontend, and flash tool
-> otherwise track upstream closely.
+> **Use this fork if** you run Home Assistant and want the robot exposed as a first-class HA device, or if you
+> are helping validate the active no-go guard and four-channel physical bumper interface.
 
 The upstream project is an open-source replacement for Neato's discontinued cloud and mobile app: an ESP32
 bridge that talks to Botvac robots (D3-D7) over UART and exposes a local web UI over WiFi — no cloud, no app,
 no account required.
 
 > [!NOTE]
-> Both upstream and this fork are early beta. Rough edges are expected. For HA-integration bugs, open an
-> [issue here](https://github.com/Leicas/OpenNeato/issues); for firmware/frontend/flash-tool bugs, file
-> against [upstream](https://github.com/renjfk/OpenNeato/issues).
+> Both upstream and this fork are early beta. Rough edges are expected. For changes specific to this combined
+> fork, open an [issue here](https://github.com/slavazagromov/OpenNeato/issues). For an unmodified upstream
+> firmware/frontend/flash-tool bug, file against [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato/issues).
 
 > [!TIP]
 > Want to get a feel for the underlying web UI without hardware? Open the upstream
@@ -102,7 +134,7 @@ by IP/hostname and exposes the robot as a full HA device — no YAML, no extra a
 
 ### Install via HACS
 
-1. In HACS, add this fork as a **custom repository**: `https://github.com/Leicas/OpenNeato` (category:
+1. In HACS, add this fork as a **custom repository**: `https://github.com/slavazagromov/OpenNeato` (category:
    *Integration*).
 2. Search for **OpenNeato** in HACS and install.
 3. Restart Home Assistant.
@@ -186,7 +218,7 @@ Highlights:
 
 ### Reporting integration bugs
 
-Use this fork's [issue tracker](https://github.com/Leicas/OpenNeato/issues) for anything that lives under
+Use this fork's [issue tracker](https://github.com/slavazagromov/OpenNeato/issues) for anything that lives under
 `custom_components/openneato/`. For firmware, frontend, or flash-tool issues, upstream
 [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato/issues) is the right place.
 
@@ -219,8 +251,9 @@ Requires [Node.js](https://nodejs.org/) 22+, [PlatformIO CLI](https://platformio
 and [Go](https://go.dev/) 1.26+.
 
 ```bash
-git clone https://github.com/renjfk/OpenNeato.git
+git clone https://github.com/slavazagromov/OpenNeato.git
 cd OpenNeato
+git switch feature/nogo-physical-bumpers
 
 # Build frontend (generates web_assets.h)
 cd frontend && npm ci && npm run build && cd ..

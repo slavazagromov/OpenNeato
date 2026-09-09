@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.24.0-nogo.5
+
+### Fixed
+
+* Removed the ineffective `IRleft` / `IRright` no-go experiment. The guard now
+  goes directly from its 45 cm projected boundary check to the proven
+  pause/TestMode/reverse/turn/resume maneuver, eliminating a 1.4-second delay
+  and false-success detection from stale heading data.
+* Home Assistant keeps the vacuum entity in `cleaning` during the internal
+  no-go maneuver and cooldown, preventing state-triggered automations from
+  announcing a second cleaning start for the same run.
+
 ## 1.24.0-nogo.4
 
 ### Added

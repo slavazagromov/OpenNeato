@@ -2,6 +2,7 @@ import { parseMapData } from "./history-data";
 import type {
     BatteryAnalogData,
     BatteryWarrantyData,
+    BumperTestResult,
     ChargerData,
     ErrorData,
     FirmwareVersion,
@@ -52,6 +53,16 @@ async function get<T>(url: string): Promise<T> {
 async function post(url: string): Promise<void> {
     const res = await fetch(url, { method: "POST" });
     if (!res.ok) throw new Error(await parseError(res));
+}
+
+async function postJson<T>(url: string): Promise<T> {
+    const res = await fetch(url, { method: "POST" });
+    if (!res.ok) throw new Error(await parseError(res));
+    try {
+        return (await res.json()) as T;
+    } catch {
+        throw new ResponseParseError(url);
+    }
 }
 
 async function del(url: string): Promise<void> {
@@ -143,6 +154,8 @@ export const api = {
     getSettings: () => get<SettingsData>("/api/settings"),
     updateSettings: (patch: Partial<SettingsData>) => put<SettingsData>("/api/settings", patch),
     testNotification: (topic: string) => post(`/api/notifications/test?topic=${encodeURIComponent(topic)}`),
+    testBumper: (channel: string) =>
+        postJson<BumperTestResult>(`/api/nogo/bumper-test?channel=${encodeURIComponent(channel)}`),
 
     clearErrors: () => post("/api/clear-errors"),
     robotRestart: () => post("/api/power?action=restart"),

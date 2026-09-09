@@ -12,12 +12,17 @@ class NeatoSerial;
 class SettingsManager;
 
 // Active no-go guard. During an autonomous cleaning run it samples the
-// dock-relative robot pose independently of history recording. On approach to
-// a configured segment it preserves the cleaning motors, performs a
-// bumper-style reverse and turn in TestMode, exits TestMode, and explicitly
-// resumes the same clean.
+// dock-relative robot pose independently of history recording. On the original
+// ESP32 hardware build it first closes PhotoMOS relays wired across the robot's
+// bumper switches so Neato's native avoidance can keep cleaning and SLAM active.
+// If pose does not confirm avoidance, it falls back to a direct TestMode escape.
 class NoGoGuard : public LoopTask {
 public:
+    static constexpr uint8_t BUMPER_LEFT_WHISKER = 1 << 0;
+    static constexpr uint8_t BUMPER_LEFT_FRONT = 1 << 1;
+    static constexpr uint8_t BUMPER_RIGHT_FRONT = 1 << 2;
+    static constexpr uint8_t BUMPER_RIGHT_WHISKER = 1 << 3;
+
     NoGoGuard(NeatoSerial& serial, DataLogger& logger, SettingsManager& settings);
 
     void begin();
@@ -28,10 +33,14 @@ public:
     void startRun();
     void endRun();
     bool isManeuverActive() const;
+    bool physicalBumpersAvailable() const;
+    bool startBumperTest(const String& channel, uint8_t& requestedMask, String& error);
+    void finishBumperTest(uint8_t requestedMask, uint8_t detectedMask, bool sensorReadOk);
 
 private:
     enum class Stage : uint8_t {
         IDLE,
+        PHYSICAL_BUMPER_OBSERVE,
         PAUSE_PENDING,
         TESTMODE_ON_PENDING,
         CLEANING_MOTORS_PENDING,
@@ -62,10 +71,15 @@ private:
     bool testModeEntered = false;
     NoGoPoint previousPose;
     NoGoPoint lastPose;
+    NoGoPoint emulationStartPose;
+    NoGoPoint emulationStartHeading;
+    NoGoPoint escapeAway;
     float previousTheta = 0.0f;
     float warningDistanceM = 0.20f;
     float lastDistanceM = -1.0f;
-    int closestSegment = -1;
+    float lastProjectedDistanceM = -1.0f;
+    float emulationStartDistanceM = -1.0f;
+    int activeSegment = -1;
     int turnDirection = 1;
     Stage stage = Stage::IDLE;
     String lastAction = "idle";
@@ -73,11 +87,18 @@ private:
     unsigned long lastPosePollMs = 0;
     unsigned long stageDeadlineMs = 0;
     unsigned long cooldownStartedMs = 0;
+    unsigned long emulationStartedMs = 0;
+    unsigned long bumperPulseDeadlineMs = 0;
     unsigned long lastEventMs = 0;
     unsigned int nearCount = 0;
     unsigned int breachCount = 0;
     unsigned int escapeCount = 0;
     unsigned int failureCount = 0;
+    unsigned int physicalAttemptCount = 0;
+    unsigned int physicalSuccessCount = 0;
+    unsigned int fallbackCount = 0;
+    unsigned int bumperTestCount = 0;
+    uint8_t activeBumperMask = 0;
     uint8_t testModeOffAttempts = 0;
     uint8_t resumeAttempts = 0;
 
@@ -86,7 +107,16 @@ private:
     void resetRunState();
     void pollPose();
     void observePose(float x, float y, float theta);
-    void triggerEscape(float distance, bool crossed);
+    void triggerEscape(float distance, bool crossed, bool predicted, float projectedDistance, int segmentIndex);
+    void initializeBumperOutputs();
+    bool parseBumperChannel(const String& channel, uint8_t& mask) const;
+    void setBumperMask(uint8_t mask, bool active);
+    void startBumperPulse(uint8_t mask, unsigned long durationMs);
+    void releaseBumperPulse();
+    void startPhysicalBumperEscape();
+    void observePhysicalBumperResponse(const NoGoPoint& current, const NoGoPoint& projected, bool crossed);
+    void completePhysicalBumperEscape(float distance, float awayTravel, float headingDeltaDegrees);
+    void beginTestModeFallback(const char *reason);
     void sendPause();
     void sendTestModeOn();
     void sendVacuumOn();

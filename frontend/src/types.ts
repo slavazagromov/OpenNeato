@@ -4,6 +4,7 @@
 export type {
     BatteryAnalogData,
     BatteryWarrantyData,
+    BumperTestResult,
     ChargerData,
     ErrorData,
     FirmwareVersion,

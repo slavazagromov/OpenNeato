@@ -26,7 +26,7 @@ import { useNavigate } from "../components/router";
 import { useDirtyGuard } from "../hooks/use-dirty-guard";
 import { usePoll } from "../hooks/use-poll";
 import { usePolling } from "../hooks/use-polling";
-import type { FirmwareVersion, SystemData, UserSettingsData } from "../types";
+import type { BumperTestResult, FirmwareVersion, SystemData, UserSettingsData } from "../types";
 import { normalizeError } from "../utils";
 import {
     BRUSH_PRESETS,
@@ -45,6 +45,19 @@ import { useSettingsForm } from "./settings/use-settings-form";
 import { WiFiSection } from "./settings/wifi-section";
 
 type Theme = "system" | "dark" | "light";
+type BumperChannel = "left_whisker" | "left_front" | "right_front" | "right_whisker";
+
+interface BumperTestOption {
+    channel: BumperChannel;
+    label: string;
+}
+
+const BUMPER_TEST_OPTIONS: BumperTestOption[] = [
+    { channel: "left_whisker", label: "Left whisker · GPIO 25" },
+    { channel: "left_front", label: "Left front · GPIO 26" },
+    { channel: "right_front", label: "Right front · GPIO 27" },
+    { channel: "right_whisker", label: "Right whisker · GPIO 14" },
+];
 
 interface SettingsViewProps {
     theme: Theme;
@@ -253,6 +266,27 @@ export function SettingsView({ theme, onThemeChange, firmware }: SettingsViewPro
     // --- Clear errors ---
     const [showClearErrorsConfirm, setShowClearErrorsConfirm] = useState(false);
     const [clearingErrors, setClearingErrors] = useState(false);
+
+    // --- Physical bumper relay test ---
+    const [testingBumper, setTestingBumper] = useState<BumperChannel | null>(null);
+    const [bumperTestResult, setBumperTestResult] = useState<string | null>(null);
+
+    const handleBumperTest = useCallback((option: BumperTestOption) => {
+        setTestingBumper(option.channel);
+        setBumperTestResult(null);
+        api.testBumper(option.channel)
+            .then((result: BumperTestResult) => {
+                setBumperTestResult(
+                    result.detected
+                        ? `${option.label}: robot sensor detected the contact`
+                        : `${option.label}: no matching robot sensor bit; check this relay and switch wiring`,
+                );
+            })
+            .catch((e: unknown) => {
+                setBumperTestResult(normalizeError(e, "Bumper test failed"));
+            })
+            .finally(() => setTestingBumper(null));
+    }, []);
 
     const handleClearErrors = useCallback(() => {
         setShowClearErrorsConfirm(false);
@@ -911,6 +945,30 @@ export function SettingsView({ theme, onThemeChange, firmware }: SettingsViewPro
                             <span class="settings-nav-chevron">&rsaquo;</span>
                         </button>
                     </div>
+                    {firmware?.chip === "ESP32" && (
+                        <div class="settings-section">
+                            <div class="settings-section-title">Physical bumper wiring</div>
+                            <div class="settings-bumper-test-grid">
+                                {BUMPER_TEST_OPTIONS.map((option) => (
+                                    <button
+                                        key={option.channel}
+                                        type="button"
+                                        class={`settings-ntfy-test-btn${testingBumper === option.channel ? " pending" : ""}`}
+                                        onClick={() => handleBumperTest(option)}
+                                        disabled={testingBumper !== null || firmware?.supported === false}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div
+                                class={`settings-bumper-test-result${bumperTestResult?.includes("detected") ? " ok" : ""}`}
+                            >
+                                {bumperTestResult ??
+                                    "Robot must be idle. Each test pulses one PhotoMOS and reads its sensor bit."}
+                            </div>
+                        </div>
+                    )}
                     <div class="settings-section">
                         <button type="button" class="settings-nav-row" onClick={() => guardedNavigate("/logs")}>
                             <div class="settings-nav-row-left">

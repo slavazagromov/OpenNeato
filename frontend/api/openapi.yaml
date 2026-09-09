@@ -886,7 +886,7 @@ paths:
     get:
       tags:
         - History
-      summary: Get passive no-go guard runtime status
+      summary: Get active no-go guard runtime status
       responses:
         "200":
           description: OK
@@ -894,6 +894,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NoGoStatus"
+  /api/nogo/bumper-test:
+    post:
+      tags:
+        - Actions
+      summary: Pulse one physical bumper relay and verify the robot sensor bit
+      description: Available only on the original ESP32 build. Blocked while a cleaning run is active.
+      parameters:
+        - name: channel
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - left_whisker
+              - left_front
+              - right_front
+              - right_whisker
+      responses:
+        "200":
+          description: Relay pulse completed and robot bumper sensors were read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BumperTestResult"
+        "400":
+          description: Missing or invalid channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A cleaning run or another bumper pulse is active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Physical bumper outputs are unavailable on this board
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: Robot sensor read timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/history/import:
     post:
       tags:
@@ -950,7 +998,7 @@ components:
       properties:
         enabled:
           type: boolean
-          description: Arms observation only; this version never sends motor commands
+          description: Arms no-go enforcement during autonomous cleaning
         referenceSession:
           type: string
           description: Cleaning-history map used when drawing these dock-relative lines
@@ -976,7 +1024,14 @@ components:
         mode:
           type: string
           enum:
-            - observe
+            - physical_bumper_with_testmode_fallback
+            - lookahead_testmode_escape
+        physicalBumpers:
+          type: boolean
+        bumperPulseActive:
+          type: boolean
+        activeBumperMask:
+          type: integer
         enabled:
           type: boolean
         runActive:
@@ -991,12 +1046,33 @@ components:
           type: integer
         breachCount:
           type: integer
+        escapeCount:
+          type: integer
+        failureCount:
+          type: integer
+        physicalAttemptCount:
+          type: integer
+        physicalSuccessCount:
+          type: integer
+        fallbackCount:
+          type: integer
+        bumperTestCount:
+          type: integer
         segments:
           type: integer
+        stage:
+          type: string
+        lastAction:
+          type: string
+        lastResult:
+          type: string
         warningDistance:
           type: number
           format: float
         lastDistance:
+          type: number
+          format: float
+        lastProjectedDistance:
           type: number
           format: float
         lastX:
@@ -1011,6 +1087,9 @@ components:
           type: string
       required:
         - mode
+        - physicalBumpers
+        - bumperPulseActive
+        - activeBumperMask
         - enabled
         - runActive
         - armed
@@ -1018,13 +1097,54 @@ components:
         - breached
         - nearCount
         - breachCount
+        - escapeCount
+        - failureCount
+        - physicalAttemptCount
+        - physicalSuccessCount
+        - fallbackCount
+        - bumperTestCount
         - segments
+        - stage
+        - lastAction
+        - lastResult
         - warningDistance
         - lastDistance
+        - lastProjectedDistance
         - lastX
         - lastY
         - lastEventMs
         - referenceSession
+    BumperTestResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        channel:
+          type: string
+        requestedMask:
+          type: integer
+        detectedMask:
+          type: integer
+        detected:
+          type: boolean
+        lSideBit:
+          type: boolean
+        lFrontBit:
+          type: boolean
+        rFrontBit:
+          type: boolean
+        rSideBit:
+          type: boolean
+      required:
+        - ok
+        - channel
+        - requestedMask
+        - detectedMask
+        - detected
+        - lSideBit
+        - lFrontBit
+        - rFrontBit
+        - rSideBit
     Ok:
       type: object
       properties:
