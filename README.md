@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> **Current Home Assistant + physical no-go development:** see the
+> [`feature/nogo-physical-bumpers` branch](https://github.com/slavazagromov/OpenNeato/tree/feature/nogo-physical-bumpers)
+> and [draft pull request #2](https://github.com/slavazagromov/OpenNeato/pull/2).
+> It combines the OpenNeato firmware with the Home Assistant integration and adds four resistor-driven
+> PhotoMOS bumper/whisker switches. The custom code was read, reviewed, and rewritten by OpenAI Codex.
+> **On-robot hardware testing is pending, so the experimental code has not been merged into `main`.**
+
 [![CI](https://github.com/renjfk/OpenNeato/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/renjfk/OpenNeato/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/renjfk/OpenNeato)](https://github.com/renjfk/OpenNeato/releases/latest)
