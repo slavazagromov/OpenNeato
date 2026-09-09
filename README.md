@@ -132,6 +132,47 @@ by IP/hostname and exposes the robot as a full HA device — no YAML, no extra a
 > upstream [`renjfk/OpenNeato`](https://github.com/renjfk/OpenNeato) closely. If you only want the standalone web
 > UI, use upstream directly.
 
+### Home Assistant no-go workflow
+
+Home Assistant is not merely displaying the robot in this fork. The custom
+integration provides the map editor and sends the saved geometry to the ESP32:
+
+1. Add `type: custom:openneato-replay-card` to a Lovelace dashboard. SkyDash
+   uses one replay card for each robot on its **Vacuums** tab, alongside the
+   vacuum controls, schedule, notifications, Wi-Fi/error status, last-clean
+   statistics, maintenance buttons, and robot web-interface link.
+2. In the replay card, select a completed cleaning session whose floor plan
+   aligns with the room, then click **No-go lines**.
+3. Tap the map to place at least two points. Use **New line** for another
+   barrier and **Undo** to correct a point.
+4. Set **Guard on**, then click **Save**. Older passive builds called this
+   control **Observer on**; the active implementation deliberately calls it
+   **Guard on** because it now causes a physical avoidance response.
+5. A successful save reports `N line(s) armed for enforcement`. The integration
+   transforms the card coordinates into the robot's dock-relative frame and
+   sends the reference session, 0.20 m warning distance, enabled state, and
+   line geometry to the ESP32. The ESP32 validates and persists it in
+   `/nogo.json`, so enforcement does not depend on the dashboard remaining
+   open.
+
+The HA entity ID retains the older word for compatibility:
+`binary_sensor.<robot>_no_go_observer_armed`. Its displayed name is **No-go
+guard armed**. The integration also exposes **Near no-go line**, **No-go line
+breached**, line distance, guard stage, last action/result, near/breach counts,
+completed escapes, and failed-step counts. It fires `openneato_nogo_near` and
+`openneato_nogo_breached` events on new transitions.
+
+During a fallback maneuver, the integration keeps the vacuum entity in
+`cleaning` state while the firmware briefly pauses, enters TestMode, reverses,
+turns, resumes, and cools down. This prevents Home Assistant automations from
+mistaking one avoidance maneuver for a stopped and newly started cleaning run.
+
+> [!NOTE]
+> If the replay card says **No-go unavailable**, Home Assistant is installed but
+> the connected robot does not expose the matching `/api/nogo/*` firmware
+> endpoints. Both the integration from this branch and the combined robot
+> firmware must be installed.
+
 ### Install via HACS
 
 1. In HACS, add this fork as a **custom repository**: `https://github.com/slavazagromov/OpenNeato` (category:
@@ -152,15 +193,16 @@ A single device with the following entity groups:
   fan speed presets (Eco/Auto/Intense), error reporting. Works with all the standard vacuum cards.
 - **Map card** — [`openneato-replay-card`](custom_components/openneato/www/openneato-replay-card.js), a
   canvas Lovelace card that draws the accumulated LIDAR floorplan and replays a cleaning session over it,
-  with pan, zoom and a timeline scrubber. It reads the `openneato/session` and `openneato/sessions`
-  websocket commands directly, so there is no server-side rendering and no image polling. It replaces the
-  former `LIDAR map` and `Cleaning replay` camera entities, which are gone.
+  with pan, zoom, a timeline scrubber, and the active no-go editor. It reads the `openneato/session`,
+  `openneato/sessions`, `openneato/nogo_get`, and `openneato/nogo_set` websocket commands directly. It
+  replaces the former `LIDAR map` and `Cleaning replay` camera entities, which are gone.
 - **Sensors** — battery level/voltage/current/temperature, battery cycle count, cumulative cleaning time,
   WiFi RSSI, free heap, storage used, uptime, motor RPMs, error code/message, plus "last clean" stats
   (duration, area covered, distance, battery used, mode, end time) pulled from the on-device history.
 - **Binary sensors** — charging, external power, battery over-temp, battery failure, empty fuel, error
   active, NTP synced, dustbin seated, left/right wheel lifted, DC jack, and the six bumper contacts
-  (front/side/LDS, left and right — disabled by default, since they toggle on every bump).
+  (front/side/LDS, left and right — disabled by default, since they toggle on every bump), plus no-go guard
+  armed, near-line, and breached states.
 - **Switches** — eco mode, intense clean, bin-full detect, wall follower, schedule on/off, button-click
   sounds, melodies, warnings, stealth LED, remote syslog, WiFi AP fallback, and per-event push
   notifications (start/done/error/alert/docking).
@@ -200,6 +242,10 @@ sensor states) are tagged so they cluster cleanly under HA's Diagnostic section.
 
 Full per-version notes live in [`custom_components/openneato/CHANGELOG.md`](custom_components/openneato/CHANGELOG.md).
 Highlights:
+
+- **Current physical test branch** — active no-go status and events; replay-card guard editor; map/robot
+  coordinate translation; physical-bumper-first avoidance with the direct TestMode escape retained as
+  fallback; HA vacuum state stays continuously `cleaning` through an avoidance maneuver.
 
 - **1.12** — the `openneato-replay-card` canvas card replaces the `LIDAR map` and `Cleaning replay`
   cameras (`Platform.CAMERA` dropped); self-calibrating LIDAR floorplan with per-session alignment;
