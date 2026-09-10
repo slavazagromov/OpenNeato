@@ -11,6 +11,7 @@ import type {
     LogFileInfo,
     ManualStatus,
     MapData,
+    ScheduleNextData,
     SettingsData,
     StateData,
     SystemData,
@@ -143,6 +144,9 @@ export const api = {
     cleanPause: () => post("/api/clean?action=pause"),
     cleanStop: () => post("/api/clean?action=stop"),
     cleanDock: () => post("/api/clean?action=dock"),
+    getNextSchedule: () => get<ScheduleNextData>("/api/schedule/next"),
+    skipNextClean: () => post("/api/schedule/next"),
+    cancelSkipNextClean: () => del("/api/schedule/next"),
     manual: (enable: boolean) => post(`/api/manual?enable=${enable ? 1 : 0}`),
     manualMove: (left: number, right: number, speed: number) =>
         post(`/api/manual/move?left=${left}&right=${right}&speed=${speed}`),

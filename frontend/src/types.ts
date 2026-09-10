@@ -16,6 +16,7 @@ export type {
     MapSession,
     MapSummary,
     MotorData,
+    ScheduleNextData,
     SettingsData,
     StateData,
     SystemData,
