@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: v1.24.0-nogo.7-native-timing1
+      PRIMARY_FILE: OpenNeato-ESP32-nogo-native-timing.bin
       FACTORY_FILE: firmware/releases/OpenNeato-ESP32-nogo-native-timing1.factory.bin
       OTA_FILE: firmware/releases/OpenNeato-ESP32-nogo-native-timing1.ota.bin
       CHECKSUM_FILE: firmware/releases/checksums.txt
@@ -32,18 +33,23 @@ jobs:
         working-directory: firmware/releases
         run: sha256sum --check checksums.txt
 
+      - name: Create simple primary download name
+        run: cp "$FACTORY_FILE" "$PRIMARY_FILE"
+
       - name: Create or update tracked prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" \
+              "$PRIMARY_FILE" \
               "$FACTORY_FILE" \
               "$OTA_FILE" \
               "$CHECKSUM_FILE" \
               --clobber
           else
             gh release create "$RELEASE_TAG" \
+              "$PRIMARY_FILE" \
               "$FACTORY_FILE" \
               "$OTA_FILE" \
               "$CHECKSUM_FILE" \
@@ -53,6 +59,10 @@ jobs:
               --notes-file - <<'EOF'
           Experimental original-ESP32/WROOM32 build for the four-channel PhotoMOS no-go guard.
 
+          ## Main download
+          - `OpenNeato-ESP32-nogo-native-timing.bin` is the recommended first-install USB image. GitHub tracks downloads of this Release asset.
+
+          ## Other files
           - `OpenNeato-ESP32-nogo-native-timing1.ota.bin` is the exact application image that passed the real Botvac D5 test on September 10, 2026.
           - `OpenNeato-ESP32-nogo-native-timing1.factory.bin` contains the matching bootloader, OTA partition table, boot selector, and tested application image for a first USB flash at offset `0x0`.
           - The validated guard timing is a 750 ms physical contact followed by a 2-second native-response observation window.
