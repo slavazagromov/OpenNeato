@@ -40,3 +40,5 @@ jobs:
               --title "OpenNeato HA 1.24.0-nogo.6" \
               --notes "Home Assistant/HACS release adding no-go shape editing in the OpenNeato replay card: Line, Box, Circle, and Move/resize tools. Shapes are converted to the existing no-go line format; robot firmware/protocol is unchanged."
           fi
+
+# one-shot publish trigger
