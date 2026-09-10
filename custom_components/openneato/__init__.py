@@ -35,6 +35,8 @@ REPLAY_CARD_FILENAME = "openneato-replay-card.js"
 REPLAY_CARD_URL = f"/openneato_static/{REPLAY_CARD_FILENAME}"
 NOGO_SHAPES_FILENAME = "openneato-nogo-shapes.js"
 NOGO_SHAPES_URL = f"/openneato_static/{NOGO_SHAPES_FILENAME}"
+NOGO_CARD_FILENAME = "openneato-nogo-card.js"
+NOGO_CARD_URL = f"/openneato_static/{NOGO_CARD_FILENAME}"
 _FRONTEND_REGISTERED = "frontend_registered"
 
 PLATFORMS: list[Platform] = [
@@ -131,7 +133,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Serve the replay card and register the API it calls.
 
     Runs once per HA start, not once per config entry — the static paths, the
-    WebSocket commands and the frontend helper script are all global.
+    WebSocket commands and the frontend helper scripts are all global.
     """
     if hass.data[DOMAIN].get(_FRONTEND_REGISTERED):
         return
@@ -143,6 +145,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     www_path = Path(__file__).parent / "www"
     card_path = www_path / REPLAY_CARD_FILENAME
     shapes_path = www_path / NOGO_SHAPES_FILENAME
+    nogo_card_path = www_path / NOGO_CARD_FILENAME
     if not await hass.async_add_executor_job(card_path.is_file):
         _LOGGER.warning("Replay card asset missing at %s; card will not load", card_path)
         return
@@ -151,8 +154,13 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             "No-go shape helper missing at %s; line editor will still work",
             shapes_path,
         )
+    if not await hass.async_add_executor_job(nogo_card_path.is_file):
+        _LOGGER.warning(
+            "Standalone no-go card missing at %s; embedded controls will still work",
+            nogo_card_path,
+        )
 
-    # Serving the card is a convenience, not a prerequisite for the robot to
+    # Serving the cards is a convenience, not a prerequisite for the robot to
     # work — never let a frontend API change take the vacuum down with it.
     try:
         static_paths = [StaticPathConfig(REPLAY_CARD_URL, str(card_path), True)]
@@ -160,32 +168,31 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             static_paths.append(
                 StaticPathConfig(NOGO_SHAPES_URL, str(shapes_path), True)
             )
+        if await hass.async_add_executor_job(nogo_card_path.is_file):
+            static_paths.append(
+                StaticPathConfig(NOGO_CARD_URL, str(nogo_card_path), True)
+            )
         await hass.http.async_register_static_paths(static_paths)
 
         # Deliberately no add_extra_js_url for the replay card itself.
         #
-        # The card also has to be declared as a Lovelace resource, because
-        # add_extra_js_url alone loses the race against the dashboard's first
-        # render. Having *both* is worse than either: the two loaders race, and
-        # on the loads where neither import wins before the view is built the
-        # file is fetched but never evaluated, so the element is unregistered
-        # and the card renders as "Custom element doesn't exist" -- about one
-        # reload in three, and more often when reloading quickly.
-        #
-        # The shape helper is different: it waits on
-        # customElements.whenDefined("openneato-replay-card"), so it is safe to
-        # load globally before or after the Lovelace resource and cannot race
-        # the card registration.
+        # The replay card also has to be declared as a Lovelace resource,
+        # because add_extra_js_url alone loses the race against the dashboard's
+        # first render. The helper scripts are different: they can load
+        # globally and attach to the replay card whenever it appears.
         integration = await async_get_integration(hass, DOMAIN)
         version = integration.version or "0"
         if await hass.async_add_executor_job(shapes_path.is_file):
             add_extra_js_url(hass, f"{NOGO_SHAPES_URL}?v={version}")
+        if await hass.async_add_executor_job(nogo_card_path.is_file):
+            add_extra_js_url(hass, f"{NOGO_CARD_URL}?v={version}")
         _LOGGER.debug(
-            "Replay card %s served at %s; no-go shape helper at %s; register "
-            "the card as a Lovelace resource with the matching ?v= query",
+            "Replay card %s served at %s; no-go helpers at %s and %s; register "
+            "the replay card as a Lovelace resource with the matching ?v= query",
             version,
             REPLAY_CARD_URL,
             NOGO_SHAPES_URL,
+            NOGO_CARD_URL,
         )
     except Exception:  # noqa: BLE001
         _LOGGER.exception(
