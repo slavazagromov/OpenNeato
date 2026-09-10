@@ -22,26 +22,41 @@ OpenAI Codex**, with concept guidance, physical fabrication, real-robot testing,
 fork's custom work; the original upstream projects retain their own authorship and licenses.
 
 > [!WARNING]
-> **First on-robot enforcement test passed on September 10, 2026.** Firmware
-> `1.24.0-nogo.6-physical-test1` saved and armed a 1.2 m test square through the Home Assistant map API on a
-> Botvac D5, detected the boundary, and completed four escape cycles with zero failed steps. The robot then
-> returned to the dock with the guard disarmed and no remaining error. Telemetry showed the TestMode
-> reverse/turn fallback was used, so a native Neato turn caused solely by the PhotoMOS bumper pulse is **not
-> yet confirmed**. This branch remains experimental. Never use a software no-go line as the only protection
-> at stairs or another fall hazard.
+> **Native physical-bumper no-go avoidance passed on a real Botvac D5 on September 10, 2026.**
+> Firmware `1.24.0-nogo.7-native-timing1` used a 750 ms PhotoMOS contact and a 2-second observation
+> window. The first controlled encounter reported one physical attempt, one native success, zero fallbacks,
+> and zero failed steps. This remains experimental motion-control firmware: never use a software line as
+> the only protection at stairs or another fall hazard.
 
-### First moving field test
+### Verified moving field tests
 
-The September 10, 2026 test exercised the complete deployed path: the SkyDash/OpenNeato Home Assistant
-integration wrote a closed square with `openneato/nogo_set`; the ESP32 validated and persisted the geometry;
-the guard armed when cleaning began; and the HA entities reported `near_no_go_line: on`, four completed
-escapes, zero failed steps, and an eventual clean `docked` state. A deliberately tight square around the dock
-briefly produced Neato error 282 (`Failed to undock from base`), which cleared after the run was stopped and
-the guard was disarmed.
+The complete deployed path is now proven: the SkyDash/OpenNeato Home Assistant integration writes saved
+no-go geometry with `openneato/nogo_set`; the ESP32 validates and persists it; the guard arms when an
+autonomous cleaning run begins; and the four PhotoMOS outputs emulate the robot's real bumper contacts.
 
-This is a **pass for software no-go detection and enforced avoidance through the safety fallback**, not yet a
-pass for native bumper-only avoidance. On September 10, 2026, the firmware's stationary diagnostic also
-verified all four independent electrical paths end-to-end:
+The first moving test on September 10, 2026 used the shorter 300 ms pulse and safely completed four avoidance
+cycles through the TestMode reverse/turn fallback with zero failed steps. That proved map translation,
+look-ahead detection, enforcement, telemetry, and fallback safety, but not the native bumper response.
+
+A second controlled test later that day validated the longer timing on a Botvac D5. After returning the robot
+from a stale diagnostic `UIMGR_STATE_TESTMODE` state with `TestMode Off`, a 1.2 m square was armed and house
+cleaning started. On the first boundary encounter, `/api/nogo/status` reported:
+
+| Counter/result | Verified value |
+| --- | ---: |
+| `physicalAttemptCount` | 1 |
+| `physicalSuccessCount` | 1 |
+| `fallbackCount` | 0 |
+| `failureCount` | 0 |
+| `escapeCount` | 1 |
+| `lastAction` | `physical_bumper_escape_complete` |
+| `lastResult` | `ok` |
+
+The guard detected the line before crossing it, pulsed the appropriate physical-bumper pair, observed the
+native cleaner move/turn away, and entered cooldown without pausing, entering TestMode, or using the software
+fallback. The temporary square was then disabled and the robot was stopped without an error.
+
+The stationary diagnostic also verified all four independent electrical paths end-to-end:
 
 | Diagnostic channel | Requested mask | Only asserted robot bit | Result |
 | --- | ---: | --- | --- |
@@ -50,17 +65,15 @@ verified all four independent electrical paths end-to-end:
 | Right inner/front / GPIO27 | 4 | `rFrontBit` | PASS |
 | Right outer whisker / GPIO14 | 8 | `rSideBit` | PASS |
 
-Every request returned HTTP 200 with `detected: true`. The post-test status reported
-`activeBumperMask: 0`, `bumperPulseActive: false`, and all four physical sensor bits false, confirming that
-every output released. A wider, supervised moving test is still required to determine why the first moving
-encounter used the fallback instead of recording a native bumper-only escape.
+Every diagnostic request returned HTTP 200 with `detected: true`. Post-test status confirmed
+`activeBumperMask: 0`, `bumperPulseActive: false`, and all four physical sensor bits released.
 
 ## Four-channel physical bumper interface
 
 The original ESP32 WROOM32 build drives four normally-open Omron G3VM-61A1 PhotoMOS relays. Each relay input
 is wired from its ESP32 GPIO through a **330 ohm series resistor**, with pin 2 returning to any ESP32 GND.
 The isolated relay output (pins 3 and 4, no polarity) is placed in parallel with the corresponding Neato
-bumper/whisker switch. The current test candidate holds the contact for **750 ms** and observes the robot for **2 seconds** before using the safety fallback. This timing is source/build-tested but still requires a supervised moving trial.
+bumper/whisker switch. The validated build holds the contact for **750 ms** and observes the robot for **2 seconds** before using the safety fallback. This timing passed a controlled real-robot native-avoidance test on September 10, 2026.
 
 Directions below are from the robot's perspective while driving forward:
 
