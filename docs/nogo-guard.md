@@ -15,13 +15,13 @@ starts the maneuver at the configured warning distance before the robot crosses
 the line.
 
 On the original ESP32 WROOM32 build, the guard first pulses the two PhotoMOS
-relays on the side facing the no-go line for 300 ms. The relay contacts are wired
+relays on the side facing the no-go line for 750 ms. The relay contacts are wired
 in parallel with the robot's mechanical bumper switches, so the native Neato
 cleaner performs its own reverse and turn while cleaning motors and SLAM remain
 active. A right-side pulse requests a left turn, and a left-side pulse requests
 a right turn.
 
-The guard watches the pose for 750 ms. If it cannot confirm that the robot moved
+The guard watches the pose for 2 seconds. If it cannot confirm that the robot moved
 or turned away, it uses the existing fallback:
 
 1. sends the authenticated cleaning pause event;
@@ -135,6 +135,20 @@ the vacuum entity remains `cleaning` so state-triggered automations do not emit
 duplicate "started cleaning" notifications. The integration also
 exposes armed/near/breached binary sensors plus stage, last action/result,
 distance, trigger, breach, escape, and failed-step sensors.
+
+## Verified Botvac D5 result
+
+A controlled moving test on September 10, 2026 validated firmware
+`1.24.0-nogo.7-native-timing1` with the 750 ms pulse and 2-second observation
+window. A 1.2 m square was armed through the Home Assistant map path. The first
+boundary encounter produced one physical attempt, one physical success, zero
+fallbacks, zero failures, and `physical_bumper_escape_complete / ok`. The
+temporary test square was disabled after the run.
+
+The robot had been left in `UIMGR_STATE_TESTMODE` by an earlier diagnostic run,
+which prevents an ordinary cleaning start. Sending `TestMode Off` restored the
+normal idle state before this validation. Installers should verify that the robot
+is idle—not in TestMode—before a first moving test.
 
 ## Test-run inspection
 
