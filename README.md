@@ -59,7 +59,7 @@ encounter used the fallback instead of recording a native bumper-only escape.
 The original ESP32 WROOM32 build drives four normally-open Omron G3VM-61A1 PhotoMOS relays. Each relay input
 is wired from its ESP32 GPIO through a **330 ohm series resistor**, with pin 2 returning to any ESP32 GND.
 The isolated relay output (pins 3 and 4, no polarity) is placed in parallel with the corresponding Neato
-bumper/whisker switch. A 300 ms pulse therefore looks like a real bumper hit to the robot's native cleaner.
+bumper/whisker switch. The current test candidate holds the contact for **750 ms** and observes the robot for **2 seconds** before using the safety fallback. This timing is source/build-tested but still requires a supervised moving trial.
 
 Directions below are from the robot's perspective while driving forward:
 
