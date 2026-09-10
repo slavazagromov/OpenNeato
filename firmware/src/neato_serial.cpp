@@ -616,8 +616,7 @@ bool NeatoSerial::clean(const String& action, std::function<void(bool)> callback
             const std::pair<int, int> dimensions = spotDimensionsGetter();
             const int width = constrain(dimensions.first, 100, 400);
             const int height = constrain(dimensions.second, 100, 400);
-            const String command =
-                    String(CMD_CLEAN_SPOT) + " Width " + String(width) + " Height " + String(height);
+            const String command = String(CMD_CLEAN_SPOT) + " Width " + String(width) + " Height " + String(height);
             LOG("NEATO", "Starting %d x %d cm spot clean", width, height);
             return enqueue(command, wrapAction(callback), PRIORITY_HIGH);
         }
