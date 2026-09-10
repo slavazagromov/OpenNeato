@@ -62,6 +62,9 @@ public:
     void getErrClear(std::function<void(bool, const ErrorData&)> callback);
     void getLdsScan(std::function<void(bool, const LdsScanData&)> callback);
     void getRobotPos(bool smooth, std::function<void(bool, const RobotPosData&)> callback);
+    // Bypass the one-second sensor cache. Used by the no-go safety loop where
+    // stale localization can mean several centimetres of additional travel.
+    void getRobotPosFresh(bool smooth, std::function<void(bool, const RobotPosData&)> callback);
     // -- Action commands (fire-and-forget by default) ------------------------
 
     bool clean(const String& action, std::function<void(bool)> callback = nullptr);
@@ -72,7 +75,6 @@ public:
     bool setMotorBrush(int rpm, std::function<void(bool)> callback = nullptr);
     bool setMotorVacuum(bool on, int speedPercent = 80, std::function<void(bool)> callback = nullptr);
     bool setMotorSideBrush(bool on, int powerMw = 5000, std::function<void(bool)> callback = nullptr);
-
 
     // Set a single robot user setting via "SetUserSettings <key> <value>".
     // Invalidates the user settings cache.
@@ -123,6 +125,12 @@ public:
     // Called from clean() before house clean to send SetNavigationMode.
     // Returns the stored nav mode string (e.g. "Normal", "Gentle").
     void setNavModeGetter(std::function<String()> getter) { navModeGetter = getter; }
+
+    // The mode a clean started now would actually run with -- the same value
+    // clean() sends as SetNavigationMode. CleaningHistory stamps it into the
+    // session header so a replay can say how the robot was navigating, which
+    // the summary alone never recorded. Empty if no getter is wired.
+    String currentNavMode() const { return navModeGetter ? navModeGetter() : String(); }
 
     // -- Status --------------------------------------------------------------
 

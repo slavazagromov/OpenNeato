@@ -68,7 +68,10 @@ void SettingsManager::load() {
     current.syslogEnabled = prefs.getBool(NVS_KEY_SYSLOG_ENABLED, false);
     current.syslogIp = prefs.getString(NVS_KEY_SYSLOG_IP, "");
     current.ntfyTopic = prefs.getString(NVS_KEY_NTFY_TOPIC, "");
+    current.ntfyServer = prefs.getString(NVS_KEY_NTFY_SERVER, "");
+    current.ntfyToken = prefs.getString(NVS_KEY_NTFY_TOKEN, "");
     current.ntfyEnabled = prefs.getBool(NVS_KEY_NTFY_ENABLED, false);
+    current.ntfyOnStart = prefs.getBool(NVS_KEY_NTFY_ON_START, true);
     current.ntfyOnDone = prefs.getBool(NVS_KEY_NTFY_ON_DONE, true);
     current.ntfyOnError = prefs.getBool(NVS_KEY_NTFY_ON_ERR, true);
     current.ntfyOnAlert = prefs.getBool(NVS_KEY_NTFY_ON_ALERT, true);
@@ -103,7 +106,10 @@ void SettingsManager::save() {
     prefs.putBool(NVS_KEY_SYSLOG_ENABLED, current.syslogEnabled);
     prefs.putString(NVS_KEY_SYSLOG_IP, current.syslogIp);
     prefs.putString(NVS_KEY_NTFY_TOPIC, current.ntfyTopic);
+    prefs.putString(NVS_KEY_NTFY_SERVER, current.ntfyServer);
+    prefs.putString(NVS_KEY_NTFY_TOKEN, current.ntfyToken);
     prefs.putBool(NVS_KEY_NTFY_ENABLED, current.ntfyEnabled);
+    prefs.putBool(NVS_KEY_NTFY_ON_START, current.ntfyOnStart);
     prefs.putBool(NVS_KEY_NTFY_ON_DONE, current.ntfyOnDone);
     prefs.putBool(NVS_KEY_NTFY_ON_ERR, current.ntfyOnError);
     prefs.putBool(NVS_KEY_NTFY_ON_ALERT, current.ntfyOnAlert);
@@ -143,28 +149,60 @@ const Settings& SettingsManager::get() {
     return current;
 }
 
+void SettingsManager::enableTemporaryInfoLogging() {
+    if (current.logLevel == LOG_LEVEL_OFF)
+        current.logLevel = LOG_LEVEL_INFO;
+    logLevelEnabledAt = millis();
+    LOG("SETTINGS", "Temporary no-go info logging enabled (auto-off in %lu min)",
+        static_cast<unsigned long>(LOG_LEVEL_AUTO_OFF_INFO_MS / 60000));
+}
+
 // -- Partial update ----------------------------------------------------------
+
+// Non-empty, max 32 chars, alphanumeric + hyphens only.
+static bool isValidHostname(const String& h) {
+    if (h.length() == 0 || h.length() > 32)
+        return false;
+    for (unsigned int i = 0; i < h.length(); i++) {
+        char c = h.charAt(i);
+        if (!isalnum(c) && c != '-')
+            return false;
+    }
+    return true;
+}
 
 ApplyResult SettingsManager::apply(const String& json) {
     Settings incoming = current; // start from current values
     if (!incoming.fromJson(json))
         return APPLY_INVALID;
 
+    // Validate everything that can be rejected before touching anything.
+    //
+    // The rest of this function mutates `current` field by field, so a value
+    // rejected halfway through used to leave every field before it already
+    // applied while the caller was told the whole request had failed. That was
+    // survivable when a schedule was a curiosity; now that Home Assistant
+    // exposes all fourteen slots, one bad hour in a request would quietly
+    // commit whatever came before it.
+    if (!isValidHostname(incoming.hostname))
+        return APPLY_INVALID;
+    if (incoming.uartTxPin == incoming.uartRxPin &&
+        (incoming.uartTxPin != current.uartTxPin || incoming.uartRxPin != current.uartRxPin)) {
+        LOG("SETTINGS", "Rejected: TX and RX cannot be the same pin (GPIO%d)", incoming.uartTxPin);
+        return APPLY_INVALID;
+    }
+    for (const SchedDay& day: incoming.sched) {
+        for (const SchedSlot& slot: day.slots) {
+            if (slot.hour < 0 || slot.hour > 23 || slot.minute < 0 || slot.minute > 59)
+                return APPLY_INVALID;
+        }
+    }
+
     bool changed = false;
     bool needReboot = false;
 
     if (incoming.hostname != current.hostname) {
-        // Validate: non-empty, max 32 chars, alphanumeric + hyphens only
-        String h = incoming.hostname;
-        bool valid = h.length() > 0 && h.length() <= 32;
-        for (unsigned int i = 0; valid && i < h.length(); i++) {
-            char c = h.charAt(i);
-            if (!isalnum(c) && c != '-')
-                valid = false;
-        }
-        if (!valid)
-            return APPLY_INVALID;
-        current.hostname = h;
+        current.hostname = incoming.hostname;
         changed = true;
         needReboot = true;
         LOG("SETTINGS", "Hostname -> %s (reboot required)", current.hostname.c_str());
@@ -205,15 +243,6 @@ ApplyResult SettingsManager::apply(const String& json) {
     }
 
     // UART pin changes require reboot — hardware UART can't be reconfigured at runtime
-    int newTx = incoming.uartTxPin != current.uartTxPin ? incoming.uartTxPin : current.uartTxPin;
-    int newRx = incoming.uartRxPin != current.uartRxPin ? incoming.uartRxPin : current.uartRxPin;
-
-    // Reject if TX and RX would be the same pin
-    if (newTx == newRx && (incoming.uartTxPin != current.uartTxPin || incoming.uartRxPin != current.uartRxPin)) {
-        LOG("SETTINGS", "Rejected: TX and RX cannot be the same pin (GPIO%d)", newTx);
-        return APPLY_INVALID;
-    }
-
     if (incoming.uartTxPin != current.uartTxPin && incoming.uartTxPin >= 0 && incoming.uartTxPin <= MAX_GPIO_PIN) {
         current.uartTxPin = incoming.uartTxPin;
         changed = true;
@@ -285,11 +314,26 @@ ApplyResult SettingsManager::apply(const String& json) {
         changed = true;
         LOG("SETTINGS", "ntfy topic -> %s", current.ntfyTopic.isEmpty() ? "(disabled)" : current.ntfyTopic.c_str());
     }
+    if (incoming.ntfyServer != current.ntfyServer) {
+        current.ntfyServer = incoming.ntfyServer;
+        changed = true;
+        LOG("SETTINGS", "ntfy server -> %s", current.ntfyServer.isEmpty() ? "(ntfy.sh)" : current.ntfyServer.c_str());
+    }
+    if (incoming.ntfyToken != current.ntfyToken) {
+        current.ntfyToken = incoming.ntfyToken;
+        changed = true;
+        LOG("SETTINGS", "ntfy token -> %s", current.ntfyToken.isEmpty() ? "(none)" : "****");
+    }
 
     if (incoming.ntfyEnabled != current.ntfyEnabled) {
         current.ntfyEnabled = incoming.ntfyEnabled;
         changed = true;
         LOG("SETTINGS", "ntfy enabled -> %s", current.ntfyEnabled ? "on" : "off");
+    }
+    if (incoming.ntfyOnStart != current.ntfyOnStart) {
+        current.ntfyOnStart = incoming.ntfyOnStart;
+        changed = true;
+        LOG("SETTINGS", "ntfy on start -> %s", current.ntfyOnStart ? "on" : "off");
     }
     if (incoming.ntfyOnDone != current.ntfyOnDone) {
         current.ntfyOnDone = incoming.ntfyOnDone;
@@ -345,9 +389,7 @@ ApplyResult SettingsManager::apply(const String& json) {
             SchedSlot& cur = current.sched[d].slots[s];
             const SchedSlot& inc = incoming.sched[d].slots[s];
             if (inc.hour != cur.hour || inc.minute != cur.minute || inc.on != cur.on) {
-                // Validate hour/minute ranges
-                if (inc.hour < 0 || inc.hour > 23 || inc.minute < 0 || inc.minute > 59)
-                    return APPLY_INVALID;
+                // Ranges were checked up front, before anything was mutated.
                 cur.hour = inc.hour;
                 cur.minute = inc.minute;
                 cur.on = inc.on;
@@ -388,7 +430,10 @@ std::vector<Field> Settings::toFields() const {
             {"syslogEnabled", syslogEnabled ? "true" : "false", FIELD_BOOL},
             {"syslogIp", syslogIp, FIELD_STRING},
             {"ntfyTopic", ntfyTopic, FIELD_STRING},
+            {"ntfyServer", ntfyServer, FIELD_STRING},
+            {"ntfyToken", ntfyToken, FIELD_STRING},
             {"ntfyEnabled", ntfyEnabled ? "true" : "false", FIELD_BOOL},
+            {"ntfyOnStart", ntfyOnStart ? "true" : "false", FIELD_BOOL},
             {"ntfyOnDone", ntfyOnDone ? "true" : "false", FIELD_BOOL},
             {"ntfyOnError", ntfyOnError ? "true" : "false", FIELD_BOOL},
             {"ntfyOnAlert", ntfyOnAlert ? "true" : "false", FIELD_BOOL},
@@ -478,8 +523,20 @@ bool Settings::fromFields(const std::vector<Field>& fields) {
         ntfyTopic = f->value;
         applied = true;
     }
+    if ((f = findField(fields, "ntfyServer")) && f->type == FIELD_STRING) {
+        ntfyServer = f->value;
+        applied = true;
+    }
+    if ((f = findField(fields, "ntfyToken")) && f->type == FIELD_STRING) {
+        ntfyToken = f->value;
+        applied = true;
+    }
     if ((f = findField(fields, "ntfyEnabled")) && f->type == FIELD_BOOL) {
         ntfyEnabled = (f->value == "true");
+        applied = true;
+    }
+    if ((f = findField(fields, "ntfyOnStart")) && f->type == FIELD_BOOL) {
+        ntfyOnStart = (f->value == "true");
         applied = true;
     }
     if ((f = findField(fields, "ntfyOnDone")) && f->type == FIELD_BOOL) {

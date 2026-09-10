@@ -381,6 +381,12 @@ void NeatoSerial::getRobotPos(bool smooth, std::function<void(bool, const RobotP
     (smooth ? robotPosSmoothCache : robotPosRawCache).get(callback);
 }
 
+void NeatoSerial::getRobotPosFresh(bool smooth, std::function<void(bool, const RobotPosData&)> callback) {
+    AsyncCache<RobotPosData>& cache = smooth ? robotPosSmoothCache : robotPosRawCache;
+    cache.invalidate();
+    cache.get(callback);
+}
+
 // -- Raw fetch methods (enqueue serial command, parse response) ---------------
 
 void NeatoSerial::fetchVersion(std::function<void(bool, const VersionData&)> callback) {
@@ -564,30 +570,67 @@ bool NeatoSerial::clean(const String& action, std::function<void(bool)> callback
         return enqueue(buildSetEvent(EVT_STOP), wrapAction(callback), PRIORITY_HIGH);
     }
 
-    bool isPaused = stateCache.hasCached() && stateCache.getCached().uiState.indexOf("CLEANINGPAUSED") >= 0;
-
-    if (isPaused) {
-        // Resume in-place — preserves map and localization
+    // Explicit resume is needed by safety maneuvers after TestMode invalidates
+    // the cached UI state. Unlike the generic action below, it must never turn
+    // into a new house-clean command.
+    if (action == "resume") {
         invalidateState();
         return enqueue(buildSetEvent(EVT_RESUME), wrapAction(callback), PRIORITY_HIGH);
     }
 
-    // New clean from idle
-    invalidateState();
-    if (cleanStartCallback)
-        cleanStartCallback();
+    // Type-aware resume: "house" only resumes a paused house clean, "spot"
+    // only resumes a paused spot clean. Prevents HA "start" from resuming
+    // a previously paused spot clean when the user expects a new house clean.
+    if (action == "house") {
+        bool isPausedHouse =
+                stateCache.hasCached() && stateCache.getCached().uiState.indexOf("HOUSECLEANINGPAUSED") >= 0;
+        if (isPausedHouse) {
+            invalidateState();
+            return enqueue(buildSetEvent(EVT_RESUME), wrapAction(callback), PRIORITY_HIGH);
+        }
+        invalidateState();
+        if (cleanStartCallback)
+            cleanStartCallback();
+        // Send navigation mode first (fire-and-forget); house clean proceeds regardless.
+        if (navModeGetter) {
+            String mode = navModeGetter();
+            if (mode.length() > 0 && mode != "Normal") {
+                String navCmd = String(CMD_SET_NAVIGATION_MODE) + " " + mode;
+                enqueue(navCmd, nullptr, PRIORITY_HIGH);
+            }
+        }
+        return enqueue(buildSetEvent(EVT_START_HOUSE), wrapAction(callback), PRIORITY_HIGH);
+    }
 
     if (action == "spot") {
+        bool isPausedSpot = stateCache.hasCached() && stateCache.getCached().uiState.indexOf("SPOTCLEANINGPAUSED") >= 0;
+        if (isPausedSpot) {
+            invalidateState();
+            return enqueue(buildSetEvent(EVT_RESUME), wrapAction(callback), PRIORITY_HIGH);
+        }
+        invalidateState();
+        if (cleanStartCallback)
+            cleanStartCallback();
         return enqueue(buildSetEvent(EVT_START_SPOT), wrapAction(callback), PRIORITY_HIGH);
     }
 
-    // House clean — send navigation mode first, then start cleaning.
-    // SetNavigationMode is fire-and-forget; house clean proceeds regardless.
+    // Generic action — resume whatever is paused, or start house clean
+    bool isPaused = stateCache.hasCached() && stateCache.getCached().uiState.indexOf("CLEANINGPAUSED") >= 0;
+    if (isPaused) {
+        invalidateState();
+        return enqueue(buildSetEvent(EVT_RESUME), wrapAction(callback), PRIORITY_HIGH);
+    }
+
+    // New clean from idle — fall through to house clean
+    invalidateState();
+    if (cleanStartCallback)
+        cleanStartCallback();
+    // Send navigation mode first (fire-and-forget); house clean proceeds regardless.
     if (navModeGetter) {
         String mode = navModeGetter();
         if (mode.length() > 0 && mode != "Normal") {
-            String cmd = String(CMD_SET_NAVIGATION_MODE) + " " + mode;
-            enqueue(cmd, nullptr, PRIORITY_HIGH);
+            String navCmd = String(CMD_SET_NAVIGATION_MODE) + " " + mode;
+            enqueue(navCmd, nullptr, PRIORITY_HIGH);
         }
     }
     return enqueue(buildSetEvent(EVT_START_HOUSE), wrapAction(callback), PRIORITY_HIGH);

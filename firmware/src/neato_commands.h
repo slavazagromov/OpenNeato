@@ -111,6 +111,7 @@ struct ChargerData : public JsonSerializable {
     float vExtV = 0.0f;
     int chargerMAH = 0;
     int dischargeMAH = 0;
+    int battTempC = -1; // Battery temperature in Celsius (-1 = not available)
 
     std::vector<Field> toFields() const override;
 };
@@ -120,6 +121,15 @@ struct BatteryAnalogData : public JsonSerializable {
     int batteryCurrentMA = 0;
     float batteryTemperatureC = 0.0f;
     float externalVoltageV = 0.0f;
+
+    // Range finders, already in GetAnalogSensors and reported in millimetres.
+    // WallSensor is the side follower on the robot's right; the two drop
+    // sensors look down at the floor and are what stops it falling down a
+    // step. -1 when the robot did not report them, so a missing reading is
+    // never mistaken for a cliff.
+    int wallSensorMM = -1;
+    int dropSensorLeftMM = -1;
+    int dropSensorRightMM = -1;
 
     std::vector<Field> toFields() const override;
 };

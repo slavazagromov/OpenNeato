@@ -46,7 +46,7 @@ Create structured release notes with this EXACT format:
 ### New Features
 - Feature description emphasizing user benefit (abc1234 [by @external-author])
 
-### Improvements  
+### Improvements
 - Improvement description with user impact (abc1234 [by @external-author])
 
 ### Bug Fixes
@@ -54,7 +54,7 @@ Create structured release notes with this EXACT format:
 
 REQUIREMENTS:
 - Focus ONLY on user-facing changes and impact
-- EXCLUDE: docs, build, ci, chore, refactor, test commits  
+- EXCLUDE: docs, build, ci, chore, refactor, test commits
 - Use active voice, present tense
 - Include commit short hashes and format externally authored changes as `abc1234 by @username` (GitHub renders both as links)
 - Closely related changes may be collapsed into one bullet; retain a separate `commit by @username` attribution for each external author

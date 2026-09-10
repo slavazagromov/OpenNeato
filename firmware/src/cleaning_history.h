@@ -10,7 +10,25 @@
 #include "neato_commands.h"
 
 class NeatoSerial;
+class NoGoGuard;
 class SystemManager;
+
+// Last completed cleaning session stats — populated at end of each session,
+// read by NotificationManager to enrich "cleaning done" notifications.
+struct LastCleanStats {
+    bool valid = false; // True after at least one completed session
+    String mode; // "house", "spot", or "manual"
+    long durationSec = 0; // Cleaning duration in seconds
+    float areaCoveredM2 = 0.0f; // Estimated area in square meters
+    float distanceM = 0.0f; // Total distance traveled in meters
+    int batteryStart = -1; // Battery % at session start
+    int batteryEnd = -1; // Battery % at session end
+    int recharges = 0; // Mid-clean recharge count
+    // Bumped every time a session is finalized (success or discard) so that
+    // NotificationManager can detect when stopCollection's async charger fetch
+    // has completed and the stats above reflect the just-ended session.
+    uint32_t sessionId = 0;
+};
 
 // Session metadata returned by listSessions() — includes the raw JSON of
 // the session header line and (if finished) the summary line so the frontend
@@ -35,7 +53,7 @@ struct HistorySessionInfo {
 
 class CleaningHistory : public LoopTask {
 public:
-    CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr);
+    CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr, NoGoGuard& noGo);
 
     // -- File management (for API, mirrors DataLogger pattern) ----------------
 
@@ -43,6 +61,9 @@ public:
     std::shared_ptr<LogReader> readSession(const String& filename);
     bool deleteSession(const String& filename);
     void deleteAllSessions();
+
+    // Last completed session stats (for notification enrichment)
+    const LastCleanStats& getLastCleanStats() const { return lastCleanStats; }
 
     // Called by WebServer when a clean command is sent via API.
     // Switches to active polling so collection starts immediately
@@ -68,6 +89,11 @@ private:
     NeatoSerial& neato;
     DataLogger& dataLogger;
     SystemManager& systemManager;
+    NoGoGuard& noGoGuard;
+
+    // -- Last session stats (survives reset, updated at end of each session) --
+    LastCleanStats lastCleanStats;
+    uint32_t sessionCounter = 0; // Source of truth for lastCleanStats.sessionId
 
     // -- State tracking ------------------------------------------------------
     String prevUiState;
@@ -126,9 +152,16 @@ private:
     void flushWriteBuffer(); // Flush buffered lines to disk
     std::vector<String> writeBuffer;
     unsigned long lastFlushMs = 0;
+    // When something last read the session still being written. Poses are
+    // buffered in RAM and normally only reach the file every 30s, which is
+    // what a live viewer sees as lag. While a reader keeps asking, the flush
+    // interval drops; when it stops, buffering goes back to normal on its own
+    // so an unwatched clean costs no extra flash writes.
+    unsigned long lastWatchedMs = 0;
+    bool isWatched() const;
     void writeSessionHeader();
     void writeSessionSummary(int batteryEnd);
-    void writeSnapshot(float x, float y, float theta, float time);
+    void writeSnapshot(float x, float y, float theta, float time, int brushRPM);
     void updateAccumulators(float x, float y, float theta);
     void resetSession();
     bool replayLine(const String& line);

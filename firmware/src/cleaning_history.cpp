@@ -1,12 +1,53 @@
 #include "cleaning_history.h"
 #include "json_fields.h"
 #include "neato_serial.h"
+#include "nogo_guard.h"
 #include "system_manager.h"
 #include <SPIFFS.h>
 #include <cmath>
 
-CleaningHistory::CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr) :
-    LoopTask(HISTORY_INTERVAL_IDLE_MS), neato(neato), dataLogger(logger), systemManager(sysMgr) {
+// Heatshrink decompression can drop a byte that merges two JSONL lines into
+// one, so substring matching isn't enough — validate the braces balance and
+// nothing trails the top-level object before embedding into /api/history.
+static bool isValidMetaLine(const String& line, const char *expectedTypePrefix) {
+    if (line.length() < 2 || line[0] != '{' || line[line.length() - 1] != '}')
+        return false;
+    if (line.indexOf(expectedTypePrefix) < 0)
+        return false;
+    int depth = 0;
+    bool inString = false;
+    bool escape = false;
+    for (size_t i = 0; i < line.length(); i++) {
+        char c = line[i];
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (inString) {
+            if (c == '\\')
+                escape = true;
+            else if (c == '"')
+                inString = false;
+            continue;
+        }
+        if (c == '"')
+            inString = true;
+        else if (c == '{')
+            depth++;
+        else if (c == '}') {
+            depth--;
+            if (depth < 0)
+                return false;
+            // Reject trailing content after the top-level object closes
+            if (depth == 0 && i != line.length() - 1)
+                return false;
+        }
+    }
+    return depth == 0 && !inString;
+}
+
+CleaningHistory::CleaningHistory(NeatoSerial& neato, DataLogger& logger, SystemManager& sysMgr, NoGoGuard& noGo) :
+    LoopTask(HISTORY_INTERVAL_IDLE_MS), neato(neato), dataLogger(logger), systemManager(sysMgr), noGoGuard(noGo) {
     TaskRegistry::add(this);
 }
 
@@ -45,8 +86,11 @@ void CleaningHistory::tick() {
         return;
 
     if (collecting) {
-        // Periodically flush buffered pose snapshots to disk
-        if (!writeBuffer.empty() && millis() - lastFlushMs >= HISTORY_FLUSH_INTERVAL_MS) {
+        // Periodically flush buffered pose snapshots to disk. Faster while a
+        // reader is following the session live, so what it fetches is close to
+        // what the robot has actually done.
+        unsigned long flushEvery = isWatched() ? HISTORY_FLUSH_INTERVAL_WATCHED_MS : HISTORY_FLUSH_INTERVAL_MS;
+        if (!writeBuffer.empty() && millis() - lastFlushMs >= flushEvery) {
             flushWriteBuffer();
         }
         collectSnapshot();
@@ -154,6 +198,8 @@ void CleaningHistory::startCollection(const String& uiState) {
         return;
     }
 
+    noGoGuard.startRun();
+
     // Fetch battery level for session metadata, then write header
     neato.getCharger([this](bool ok, const ChargerData& charger) {
         if (ok) {
@@ -168,6 +214,8 @@ void CleaningHistory::startCollection(const String& uiState) {
 }
 
 void CleaningHistory::stopCollection() {
+    noGoGuard.endRun();
+
     // Flush any buffered snapshots before writing summary
     flushWriteBuffer();
 
@@ -180,6 +228,11 @@ void CleaningHistory::stopCollection() {
 
         LOG("HIST", "Session discarded (%u snapshots < %d minimum)", snapshotCount, HISTORY_MIN_SNAPSHOTS);
         dataLogger.logGenericEvent("history_discard", {{"snapshots", String(snapshotCount), FIELD_INT}});
+
+        // Mark stats invalid so NotificationManager doesn't enrich a "done"
+        // notification with stale data from the previous session.
+        lastCleanStats.valid = false;
+        lastCleanStats.sessionId = ++sessionCounter;
 
         collecting = false;
         recharging = false;
@@ -203,6 +256,22 @@ void CleaningHistory::stopCollection() {
         setInterval(HISTORY_INTERVAL_IDLE_MS);
 
         float areaCovered = static_cast<float>(visitedCells.size()) * HISTORY_AREA_CELL_M * HISTORY_AREA_CELL_M;
+
+        // Snapshot stats for notification enrichment (survives resetSession).
+        // sessionId increments last so NotificationManager can detect that
+        // the async charger fetch above has finalized the stats.
+        time_t endTime = systemManager.now();
+        lastCleanStats.valid = true;
+        lastCleanStats.mode = cleanMode;
+        lastCleanStats.durationSec = (sessionStartTime > 0 && endTime > sessionStartTime)
+                                             ? static_cast<long>(endTime - sessionStartTime)
+                                             : 0;
+        lastCleanStats.areaCoveredM2 = areaCovered;
+        lastCleanStats.distanceM = totalDistance;
+        lastCleanStats.batteryStart = batteryStart;
+        lastCleanStats.batteryEnd = batteryEnd;
+        lastCleanStats.recharges = rechargeCount;
+        lastCleanStats.sessionId = ++sessionCounter;
 
         LOG("HIST", "Collection stopped (%u snapshots, %.1fm², %d recharges)", snapshotCount, areaCovered,
             rechargeCount);
@@ -320,6 +389,14 @@ void CleaningHistory::writeSessionHeader() {
         fields.push_back({"time", String(static_cast<long>(sessionStartTime)), FIELD_INT});
     if (batteryStart >= 0)
         fields.push_back({"battery", String(batteryStart), FIELD_INT});
+    // Navigation mode, so a replay can say how the robot was actually
+    // navigating. "mode" above is the clean type (house/spot); this is
+    // Normal/Gentle/Deep/Quick, and it is the same value clean() sends as
+    // SetNavigationMode, so it is what the run really used rather than
+    // whatever the setting happens to be when the replay is watched.
+    String nav = neato.currentNavMode();
+    if (nav.length() > 0)
+        fields.push_back({"nav", nav, FIELD_STRING});
     String json = fieldsToJson(fields);
     pendingSessionJson = json;
     writeLine(json);
@@ -571,6 +648,7 @@ bool CleaningHistory::recoverCollection(const String& uiState) {
     }
 
     collecting = true;
+    noGoGuard.startRun();
     setInterval(HISTORY_INTERVAL_ACTIVE_MS);
     LOG("HIST", "Recovered session: %s (%u snapshots, %zu orphans merged)", activeFilePath.c_str(), snapshotCount,
         orphans.size());
@@ -694,6 +772,14 @@ void CleaningHistory::collectSnapshot() {
         if (stateOk) {
             prevUiState = state.uiState;
 
+            // The active no-go guard temporarily moves the robot through
+            // PAUSED and TESTMODE while preserving this cleaning session.
+            // Do not finalize history in the middle of that escape sequence.
+            if (noGoGuard.isManeuverActive()) {
+                fetchPending = false;
+                return;
+            }
+
             bool isDocking = isDockingState(state.uiState);
             bool isCleaning = isCleaningState(state.uiState);
             bool isSuspended = isSuspendedState(state.uiState);
@@ -763,7 +849,23 @@ void CleaningHistory::collectSnapshot() {
                     return;
                 }
 
-                writeSnapshot(x, y, theta, time);
+                // Brush speed rides along with the pose.
+                //
+                // A snapshot says where the robot was, never whether it was
+                // actually cleaning there. It moves with the brush stopped
+                // more often than it looks: picked up, recovering from an
+                // error, repositioning. Measured on this robot, the brush
+                // turns at ~1400 rpm while following a boundary and sits at
+                // exactly 0 in ST_F5_PickedUp and ST_F6_CleaningErrRecovery,
+                // both of which occur mid-session. Without this the replay
+                // paints those stretches as cleaned floor.
+                //
+                // The raw rpm is recorded rather than a cleaned/not flag, so
+                // the threshold can be revisited without reflashing, and so
+                // states nobody has observed yet still come out right.
+                neato.getMotors([this, x, y, theta, time](bool motorsOk, const MotorData& motors) {
+                    writeSnapshot(x, y, theta, time, motorsOk ? motors.brushRPM : -1);
+                });
             });
         });
     });
@@ -807,7 +909,7 @@ void CleaningHistory::updateAccumulators(float x, float y, float theta) {
     visitedCells.insert(cellKey);
 }
 
-void CleaningHistory::writeSnapshot(float x, float y, float theta, float time) {
+void CleaningHistory::writeSnapshot(float x, float y, float theta, float time, int brushRPM) {
     // Localization resets to origin right before session ends — drop if the
     // robot was far from origin (genuine return-to-base passes through gradually)
     if (hasPrevPose && fabsf(x) < 0.001f && fabsf(y) < 0.001f && fabsf(theta) < 0.1f) {
@@ -817,8 +919,13 @@ void CleaningHistory::writeSnapshot(float x, float y, float theta, float time) {
         }
     }
 
+    // `b` is omitted when the motor read failed, so a consumer can tell "brush
+    // stopped" from "brush unknown" and keep old sessions readable.
     String line = "{\"x\":" + String(x, 3) + ",\"y\":" + String(y, 3) + ",\"t\":" + String(theta, 1) +
-                  ",\"ts\":" + String(time, 1) + "}";
+                  ",\"ts\":" + String(time, 1);
+    if (brushRPM >= 0)
+        line += ",\"b\":" + String(brushRPM);
+    line += "}";
 
     updateAccumulators(x, y, theta);
     bufferLine(line);
@@ -998,8 +1105,10 @@ std::vector<HistorySessionInfo> CleaningHistory::listSessions() {
             } else {
                 String firstLine, lastLine;
                 readFirstLastLines(fullPath, info.compressed, firstLine, lastLine);
-                info.session = firstLine;
-                if (lastLine.indexOf("\"type\":\"summary\"") >= 0) {
+                if (isValidMetaLine(firstLine, R"("type":"session")")) {
+                    info.session = firstLine;
+                }
+                if (isValidMetaLine(lastLine, "\"type\":\"summary\"")) {
                     info.summary = lastLine;
                 }
                 // Cache for subsequent requests
@@ -1039,8 +1148,20 @@ std::vector<HistorySessionInfo> CleaningHistory::listSessions() {
     return result;
 }
 
+bool CleaningHistory::isWatched() const {
+    return lastWatchedMs != 0 && millis() - lastWatchedMs < HISTORY_WATCHER_TIMEOUT_MS;
+}
+
 std::shared_ptr<LogReader> CleaningHistory::readSession(const String& filename) {
     String path = String(HISTORY_DIR) + "/" + filename;
+
+    // Someone is following the run in progress. Note the time so the loop
+    // flushes more often from now on -- the flush itself stays in the loop
+    // task, since this runs on the async web server's thread and SPIFFS
+    // writes from two contexts would race.
+    if (collecting && path == activeFilePath) {
+        lastWatchedMs = millis();
+    }
 
     // Refuse to serve files involved in compression (partial .hs is corrupt)
     if (compressing && (path == compressSrcPath || path == compressDstPath))

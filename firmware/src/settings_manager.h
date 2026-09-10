@@ -46,7 +46,10 @@ struct Settings : public JsonSerializable {
 
     // Notifications (ntfy.sh)
     String ntfyTopic; // Empty = disabled
+    String ntfyServer; // Custom server hostname (empty = ntfy.sh)
+    String ntfyToken; // Access token for authenticated servers (empty = no auth)
     bool ntfyEnabled = false; // Global switch — must be on for any notification to fire
+    bool ntfyOnStart = true; // Notify when a cleaning cycle begins
     bool ntfyOnDone = true; // Notify when cleaning completes
     bool ntfyOnError = true; // Notify on robot error (UI_ERROR_*, code 243+)
     bool ntfyOnAlert = true; // Notify on robot alert (UI_ALERT_*, code 201-242)
@@ -54,7 +57,10 @@ struct Settings : public JsonSerializable {
 
     // Schedule (ESP32-managed, not robot serial)
     bool scheduleEnabled = false;
-    SchedDay sched[SCHEDULE_DAYS]; // Mon=0 .. Sun=6
+    // Mon=0 .. Sun=6 — NOT the C library's Sun=0, which is what
+    // Scheduler::toSchedDay() converts from. Anything that indexes this with a
+    // tm_wday straight out of localtime_r() cleans on the wrong day.
+    SchedDay sched[SCHEDULE_DAYS];
 
     // Daily maintenance automation
     bool autoRestartEnabled = false;
@@ -79,6 +85,11 @@ public:
 
     // Apply a partial update — only fields present in the JSON body are written.
     ApplyResult apply(const String& json);
+
+    // Enable the normal one-hour info capture window without persisting a new
+    // preference. Safety features use this so their transition logs are
+    // available for the current run even when logging was previously off.
+    void enableTemporaryInfoLogging();
 
     // Callback fired when timezone changes (so SystemManager can reconfigure NTP)
     using TzChangeCallback = std::function<void(const String& tz)>;

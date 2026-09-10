@@ -1,0 +1,561 @@
+"""Sensor platform for the OpenNeato integration."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import (
+    EntityCategory,
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfLength,
+    UnitOfTemperature,
+    UnitOfTime,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
+from .coordinator import latest_completed_session
+from .const import DOMAIN
+from .entity import OpenNeatoEntity
+
+
+def _latest_summary(history: Any) -> dict[str, Any] | None:
+    """Return the summary dict from the most recent completed session."""
+    session = latest_completed_session(history)
+    if not session:
+        return None
+    summary = session.get("summary")
+    return summary if isinstance(summary, dict) else None
+
+
+def _summary_value(history: Any, key: str) -> Any:
+    """Return summary[key] for the latest completed session, or None.
+
+    Spelled out rather than the shorter `(s := _latest_summary(h)) and
+    s.get(key)`: when a session carries an empty summary that idiom
+    evaluates to the empty dict itself, which would then be handed to
+    HA as a duration/distance/timestamp state.
+    """
+    summary = _latest_summary(history)
+    if not summary:
+        return None
+    return summary.get(key)
+
+
+@dataclass(frozen=True, kw_only=True)
+class OpenNeatoSensorEntityDescription(SensorEntityDescription):
+    """Describe an OpenNeato sensor."""
+
+    section: str = ""
+    field: str = ""
+    value_fn: Any = None
+
+
+SENSOR_DESCRIPTIONS: tuple[OpenNeatoSensorEntityDescription, ...] = (
+    # ── Charger ─────────────────────────────────────────────────────────
+    OpenNeatoSensorEntityDescription(
+        key="charger_fuel_percent",
+        translation_key="battery_level",
+        name="Battery level",
+        section="charger",
+        field="fuelPercent",
+        device_class=SensorDeviceClass.BATTERY,
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="charger_vbattv",
+        translation_key="battery_voltage",
+        name="Battery voltage",
+        section="charger",
+        field="vBattV",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="charger_vextv",
+        translation_key="external_voltage",
+        name="External voltage",
+        section="charger",
+        field="vExtV",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        # PR #121 moved battery temp out of /api/charger into the new
+        # /api/analog endpoint as a float in C (was an int with -1 sentinel).
+        key="charger_batt_temp",
+        translation_key="battery_temperature",
+        name="Battery temperature",
+        section="analog",
+        field="batteryTemperatureC",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="charger_discharge_mah",
+        translation_key="discharge_mah",
+        name="Battery discharge",
+        section="charger",
+        field="dischargeMAH",
+        # The robot names these *MAH, but they are not milliamp-hours: measured
+        # over three samples the value tracked the instantaneous current and
+        # *decreased* (168 -> 151), which a cumulative charge counter cannot do.
+        # They are the rectified halves of batteryCurrentMA, in milliamps.
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.MILLIAMPERE,
+        icon="mdi:battery-arrow-down",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="charger_charge_mah",
+        translation_key="charge_mah",
+        name="Battery charge",
+        section="charger",
+        field="chargerMAH",
+        # See the note on dischargeMAH above — milliamps, not milliamp-hours.
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.MILLIAMPERE,
+        icon="mdi:battery-arrow-up",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # ── Analog battery readings (PR #121, /api/analog) ──────────────────
+    OpenNeatoSensorEntityDescription(
+        key="analog_battery_voltage",
+        translation_key="analog_battery_voltage",
+        name="Battery voltage (analog)",
+        section="analog",
+        field="batteryVoltageV",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="analog_battery_current",
+        translation_key="analog_battery_current",
+        name="Battery current",
+        section="analog",
+        field="batteryCurrentMA",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.MILLIAMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="analog_external_voltage",
+        translation_key="analog_external_voltage",
+        name="External voltage (analog)",
+        section="analog",
+        field="externalVoltageV",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    # ── Range finders (GetAnalogSensors, millimetres) ────────────────────
+    # The robot reports 23 analog sensors and the bridge forwarded four. These
+    # three are the ones with a physical meaning worth watching: the side
+    # follower on the right, and the two downward sensors that stop the robot
+    # falling down a step. -1 means the robot did not report a value, so a
+    # missing reading never reads as a cliff.
+    *(
+        OpenNeatoSensorEntityDescription(
+            key=key,
+            translation_key=key,
+            name=label,
+            section="analog",
+            field=field,
+            icon=icon,
+            native_unit_of_measurement=UnitOfLength.MILLIMETERS,
+            device_class=SensorDeviceClass.DISTANCE,
+            state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            value_fn=lambda v: None if v is None or v < 0 else v,
+        )
+        for key, field, label, icon in (
+            ("wall_distance", "wallSensorMM", "Wall distance", "mdi:wall"),
+            ("drop_distance_left", "dropSensorLeftMM", "Floor distance left", "mdi:arrow-down-bold"),
+            ("drop_distance_right", "dropSensorRightMM", "Floor distance right", "mdi:arrow-down-bold"),
+        )
+    ),
+    # ── Battery warranty (PR #121, /api/warranty) ───────────────────────
+    OpenNeatoSensorEntityDescription(
+        key="warranty_battery_cycles",
+        translation_key="battery_cycles",
+        name="Battery cycles",
+        section="warranty",
+        field="cumulativeBatteryCycles",
+        icon="mdi:battery-sync",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="warranty_cleaning_time",
+        translation_key="cumulative_cleaning_time",
+        name="Cumulative cleaning time",
+        section="warranty",
+        field="cumulativeCleaningTimeSeconds",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:timer-sand",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # ── Error ───────────────────────────────────────────────────────────
+    OpenNeatoSensorEntityDescription(
+        key="error_code",
+        translation_key="error_code",
+        name="Error code",
+        section="error",
+        field="errorCode",
+        # 200 is UI_ALERT_INVALID — the robot's documented "no error" sentinel
+        # (docs/neato-serial-protocol.md). Reporting it verbatim made the
+        # dashboard read "Error code 200" on a perfectly healthy robot.
+        value_fn=lambda v: None if v in (200, "200") else v,
+        icon="mdi:alert-circle",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="error_message",
+        translation_key="error_message",
+        name="Error message",
+        section="error",
+        field="displayMessage",
+        icon="mdi:alert-circle-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # ── System ──────────────────────────────────────────────────────────
+    OpenNeatoSensorEntityDescription(
+        key="system_rssi",
+        translation_key="wifi_signal",
+        name="WiFi signal",
+        section="system",
+        field="rssi",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        native_unit_of_measurement="dBm",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="system_uptime",
+        translation_key="uptime",
+        name="Uptime",
+        section="system",
+        field="uptime",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda v: round(v / 1000) if v is not None else None,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="system_heap",
+        translation_key="free_heap",
+        name="Free heap",
+        section="system",
+        field="heap",
+        native_unit_of_measurement="B",
+        icon="mdi:memory",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="system_fs_used",
+        translation_key="storage_used",
+        name="Storage used",
+        section="system",
+        field="fsUsed",
+        native_unit_of_measurement="B",
+        icon="mdi:harddisk",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    # ── Motors ──────────────────────────────────────────────────────────
+    OpenNeatoSensorEntityDescription(
+        key="motors_brush_rpm",
+        translation_key="brush_rpm",
+        name="Brush RPM",
+        section="motors",
+        field="brushRPM",
+        native_unit_of_measurement="rpm",
+        icon="mdi:rotate-right",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="motors_vacuum_rpm",
+        translation_key="vacuum_rpm",
+        name="Vacuum RPM",
+        section="motors",
+        field="vacuumRPM",
+        native_unit_of_measurement="rpm",
+        icon="mdi:fan",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="motors_side_brush_ma",
+        translation_key="side_brush_current",
+        name="Side brush current",
+        section="motors",
+        field="sideBrushMA",
+        native_unit_of_measurement="mA",
+        icon="mdi:current-dc",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="motors_laser_rpm",
+        translation_key="lidar_rpm",
+        name="LIDAR RPM",
+        section="motors",
+        field="laserRPM",
+        native_unit_of_measurement="rpm",
+        icon="mdi:radar",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # ── Last clean stats (from history) ──────────────────────────────
+    OpenNeatoSensorEntityDescription(
+        key="last_clean_duration",
+        translation_key="last_clean_duration",
+        name="Last clean duration",
+        section="history",
+        field="",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:timer-outline",
+        value_fn=lambda data: _summary_value(data, "duration"),
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="last_clean_area",
+        translation_key="last_clean_area",
+        name="Last clean area",
+        section="history",
+        field="",
+        native_unit_of_measurement="m\u00b2",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:texture-box",
+        value_fn=lambda data: _summary_value(data, "areaCovered"),
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="last_clean_distance",
+        translation_key="last_clean_distance",
+        name="Last clean distance",
+        section="history",
+        field="",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.METERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:map-marker-distance",
+        value_fn=lambda data: _summary_value(data, "distanceTraveled"),
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="last_clean_battery_used",
+        translation_key="last_clean_battery_used",
+        name="Last clean battery used",
+        section="history",
+        field="",
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:battery-minus-outline",
+        value_fn=lambda data: (
+            s["batteryStart"] - s["batteryEnd"]
+            if (s := _latest_summary(data))
+            and s.get("batteryStart") is not None
+            and s.get("batteryEnd") is not None
+            else None
+        ),
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="last_clean_mode",
+        translation_key="last_clean_mode",
+        name="Last clean mode",
+        section="history",
+        field="",
+        icon="mdi:robot-vacuum",
+        value_fn=lambda data: _summary_value(data, "mode"),
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="last_clean_ended",
+        translation_key="last_clean_ended",
+        name="Last clean ended",
+        section="history",
+        field="",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda data: (
+            datetime.fromtimestamp(s["time"], tz=timezone.utc)
+            if (s := _latest_summary(data)) and s.get("time")
+            else None
+        ),
+    ),
+    # ── Active no-go guard ─────────────────────────────────────────────
+    OpenNeatoSensorEntityDescription(
+        key="nogo_distance",
+        translation_key="nogo_distance",
+        name="No-go line distance",
+        section="nogo",
+        field="lastDistance",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.METERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:map-marker-distance",
+        value_fn=lambda value: None if value is None or value < 0 else value,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_near_count",
+        translation_key="nogo_near_count",
+        name="No-go near count",
+        section="nogo",
+        field="nearCount",
+        icon="mdi:counter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_breach_count",
+        translation_key="nogo_breach_count",
+        name="No-go breach count",
+        section="nogo",
+        field="breachCount",
+        icon="mdi:counter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_escape_count",
+        translation_key="nogo_escape_count",
+        name="No-go escapes completed",
+        section="nogo",
+        field="escapeCount",
+        icon="mdi:robot-vacuum-alert",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_failure_count",
+        translation_key="nogo_failure_count",
+        name="No-go failed steps",
+        section="nogo",
+        field="failureCount",
+        icon="mdi:alert-circle-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_stage",
+        translation_key="nogo_stage",
+        name="No-go guard stage",
+        section="nogo",
+        field="stage",
+        icon="mdi:state-machine",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_last_action",
+        translation_key="nogo_last_action",
+        name="No-go last action",
+        section="nogo",
+        field="lastAction",
+        icon="mdi:history",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    OpenNeatoSensorEntityDescription(
+        key="nogo_last_result",
+        translation_key="nogo_last_result",
+        name="No-go last result",
+        section="nogo",
+        field="lastResult",
+        icon="mdi:check-decagram-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+)
+
+
+class OpenNeatoSensor(OpenNeatoEntity, SensorEntity):
+    """Representation of an OpenNeato sensor."""
+
+    entity_description: OpenNeatoSensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        serial: str,
+        description: OpenNeatoSensorEntityDescription,
+        model: str | None = None,
+        sw_version: str | None = None,
+        fw_version: str | None = None,
+        host: str | None = None,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            serial,
+            model=model,
+            sw_version=sw_version,
+            fw_version=fw_version,
+            host=host,
+        )
+        self.entity_description = description
+        self._attr_unique_id = f"{serial}_{description.key}"
+
+    @property
+    def native_value(self) -> Any:
+        """Return the sensor value."""
+        if self.coordinator.data is None:
+            return None
+        section_data = self.coordinator.data.get(
+            self.entity_description.section, {}
+        )
+        if self.entity_description.value_fn is not None:
+            # History sensors (field="") pass the whole section (a list);
+            # field-based sensors pass the extracted field value.
+            if self.entity_description.field:
+                return self.entity_description.value_fn(
+                    section_data.get(self.entity_description.field)
+                )
+            return self.entity_description.value_fn(section_data)
+        return section_data.get(self.entity_description.field)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up OpenNeato sensors from a config entry."""
+    data = hass.data[DOMAIN][entry.entry_id]
+    serial = data["serial"]
+    model = data["model"]
+    sw_version = data["sw_version"]
+    fw_version = data["fw_version"]
+    host = data["host"]
+    coordinator = data["coordinator"]
+
+    entities: list[OpenNeatoSensor] = []
+    for description in SENSOR_DESCRIPTIONS:
+        entities.append(
+            OpenNeatoSensor(
+                coordinator,
+                serial,
+                description,
+                model=model,
+                sw_version=sw_version,
+                fw_version=fw_version,
+                host=host,
+            )
+        )
+
+    async_add_entities(entities)

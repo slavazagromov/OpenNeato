@@ -1,16 +1,24 @@
 #include "notification_manager.h"
+#include "cleaning_history.h"
+#include "nogo_guard.h"
 #include "neato_serial.h"
 #include "settings_manager.h"
 #include "data_logger.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 
-#define NTFY_HOST "ntfy.sh"
-#define NTFY_PORT 80
+#define NTFY_DEFAULT_HOST "ntfy.sh"
 #define NTFY_CONNECT_TIMEOUT_MS 3000
 
-NotificationManager::NotificationManager(NeatoSerial& neato, SettingsManager& settings, DataLogger& logger) :
-    LoopTask(NOTIF_INTERVAL_IDLE_MS), neato(neato), settings(settings), dataLogger(logger) {
+// Max wall-clock to wait for CleaningHistory::stopCollection's async charger
+// fetch to finalize stats before sending the "done" notification anyway.
+#define NTFY_DONE_PENDING_TIMEOUT_MS 5000
+
+NotificationManager::NotificationManager(NeatoSerial& neato, SettingsManager& settings, DataLogger& logger,
+                                         CleaningHistory& history, NoGoGuard& noGoGuard) :
+    LoopTask(NOTIF_INTERVAL_IDLE_MS), neato(neato), settings(settings), dataLogger(logger), history(history),
+    noGoGuard(noGoGuard) {
     TaskRegistry::add(this);
 }
 
@@ -19,6 +27,11 @@ void NotificationManager::begin() {
 }
 
 void NotificationManager::tick() {
+    // Drain a pending "done" notification independently of the fetch path —
+    // it's waiting on CleaningHistory's async stop, not our own state fetch.
+    if (donePending)
+        flushPendingDone();
+
     if (fetchPending)
         return;
 
@@ -46,46 +59,75 @@ void NotificationManager::checkTransitions() {
                 const String& ui = state.uiState;
                 const String& rs = state.robotState;
 
-                // Detect transitions
-                if (!prevUiState.isEmpty()) {
-                    bool wasCleaning = prevUiState.indexOf("CLEANINGRUNNING") >= 0;
-                    bool wasDocking = prevUiState.indexOf("DOCKING") >= 0;
-                    bool isDocking = ui.indexOf("DOCKING") >= 0;
-                    bool isSuspended = ui.indexOf("CLEANINGSUSPENDED") >= 0;
-                    bool isIdle = ui == "UIMGR_STATE_IDLE" || ui == "UIMGR_STATE_STANDBY";
+                // A no-go escape intentionally passes through PAUSED and
+                // TESTMODE before resuming the same cleaning session. Hide
+                // those implementation states from transition tracking so the
+                // resume cannot generate another "Cleaning started" alert.
+                if (noGoGuard.isManeuverActive()) {
+                    setInterval(NOTIF_INTERVAL_ACTIVE_MS);
+                } else {
+                    // Detect transitions
+                    if (!prevUiState.isEmpty()) {
+                        bool wasCleaning = prevUiState.indexOf("CLEANINGRUNNING") >= 0;
+                        bool wasDocking = prevUiState.indexOf("DOCKING") >= 0;
+                        bool isCleaningRunning = ui.indexOf("CLEANINGRUNNING") >= 0;
+                        bool isDocking = ui.indexOf("DOCKING") >= 0;
+                        bool isSuspended = ui.indexOf("CLEANINGSUSPENDED") >= 0;
+                        bool isIdle = ui == "UIMGR_STATE_IDLE" || ui == "UIMGR_STATE_STANDBY";
 
-                    // Track cleaning context when entering docking
-                    if (wasCleaning && isDocking) {
-                        wasCleaningBeforeDock = true;
+                        // Track cleaning context when entering docking
+                        if (wasCleaning && isDocking) {
+                            wasCleaningBeforeDock = true;
+                        }
+
+                        // Mid-clean recharge: robot state ST_M1_Charging_Cleaning means
+                        // the robot docked to recharge and will resume cleaning afterwards.
+                        // The UI state transitions DOCKING -> CLEANINGSUSPENDED once on the dock.
+                        bool isRecharging = rs.indexOf("Charging_Cleaning") >= 0;
+
+                        // Fresh start: idle -> CLEANINGRUNNING (excludes resume from
+                        // pause/suspended and resume after mid-clean recharge dock).
+                        bool prevInCleaningContext =
+                                prevUiState.indexOf("CLEANING") >= 0 || prevUiState.indexOf("DOCKING") >= 0;
+                        if (isCleaningRunning && !prevInCleaningContext && cfg.ntfyOnStart) {
+                            sendNotification(topic, "arrow_forward", hostname + ": Cleaning started");
+                        }
+
+                        if (isDocking && !wasDocking && isRecharging && cfg.ntfyOnDocking) {
+                            // Recharge dock — robot will resume cleaning after charging
+                            sendNotification(topic, "electric_plug", hostname + ": Returning to base to recharge");
+                        }
+
+                        // Cleaning completed: cleaning/docking -> idle, but NOT if it's a recharge.
+                        // Also handle suspended -> idle (user stops clean while recharging).
+                        bool dockingDone = wasDocking && wasCleaningBeforeDock && !isRecharging;
+                        bool suspendedDone = (prevUiState.indexOf("CLEANINGSUSPENDED") >= 0) && wasCleaningBeforeDock;
+                        if ((wasCleaning || dockingDone || suspendedDone) && isIdle && cfg.ntfyOnDone && !donePending) {
+                            // Defer the send: CleaningHistory::stopCollection finalizes stats
+                            // inside an async getCharger callback, so reading getLastCleanStats()
+                            // here can race and pull stale data from the prior session. Capture
+                            // the current sessionId; flushPendingDone() fires once it increments
+                            // (or after NTFY_DONE_PENDING_TIMEOUT_MS).
+                            donePending = true;
+                            doneTriggerSessionId = history.getLastCleanStats().sessionId;
+                            donePendingSinceMs = millis();
+                            doneHostname = hostname;
+                            doneTopic = topic;
+                        }
+
+                        // Clear tracking flag when leaving docking — but preserve it
+                        // through DOCKING -> CLEANINGSUSPENDED (mid-clean recharge)
+                        if (wasDocking && !isDocking && !isSuspended) {
+                            wasCleaningBeforeDock = false;
+                        }
                     }
 
-                    // Mid-clean recharge: robot state ST_M1_Charging_Cleaning means
-                    // the robot docked to recharge and will resume cleaning afterwards.
-                    // The UI state transitions DOCKING -> CLEANINGSUSPENDED once on the dock.
-                    bool isRecharging = rs.indexOf("Charging_Cleaning") >= 0;
-
-                    if (isDocking && !wasDocking && isRecharging && cfg.ntfyOnDocking) {
-                        sendNotification(topic, "electric_plug", hostname, "Returning to base to recharge");
-                    }
-
-                    bool dockingDone = wasDocking && wasCleaningBeforeDock && !isRecharging;
-                    bool suspendedDone = (prevUiState.indexOf("CLEANINGSUSPENDED") >= 0) && wasCleaningBeforeDock;
-                    if ((wasCleaning || dockingDone || suspendedDone) && isIdle && cfg.ntfyOnDone) {
-                        sendNotification(topic, "white_check_mark", hostname, "Cleaning done");
-                    }
-
-                    // Clear tracking flag when leaving docking — but preserve it
-                    // through DOCKING -> CLEANINGSUSPENDED (mid-clean recharge)
-                    if (wasDocking && !isDocking && !isSuspended) {
-                        wasCleaningBeforeDock = false;
-                    }
+                    // Update adaptive interval based on current state
+                    bool active = isActiveState(ui);
+                    setInterval(active ? NOTIF_INTERVAL_ACTIVE_MS : NOTIF_INTERVAL_IDLE_MS);
+                    prevUiState = ui;
+                    prevRobotState = rs;
                 }
-
-                // Update adaptive interval based on current state
-                bool active = isActiveState(ui);
-                setInterval(active ? NOTIF_INTERVAL_ACTIVE_MS : NOTIF_INTERVAL_IDLE_MS);
-                prevUiState = ui;
-                prevRobotState = rs;
             }
 
             if (errOk) {
@@ -95,7 +137,7 @@ void NotificationManager::checkTransitions() {
                     bool allowed = isAlert ? cfg.ntfyOnAlert : cfg.ntfyOnError;
                     if (allowed) {
                         String tag = isAlert ? "information_source" : "warning";
-                        sendNotification(topic, tag, hostname, err.displayMessage);
+                        sendNotification(topic, tag, hostname + ": " + err.displayMessage);
                     }
                 }
                 prevHasError = err.hasError;
@@ -110,32 +152,80 @@ bool NotificationManager::isActiveState(const String& uiState) {
            uiState.indexOf("CLEANINGSUSPENDED") >= 0 || uiState.indexOf("DOCKING") >= 0;
 }
 
-void NotificationManager::sendNotification(const String& topic, const String& tags, const String& title,
-                                           const String& message) {
-    LOG("NOTIF", "Sending: [%s] %s: %s", tags.c_str(), title.c_str(), message.c_str());
-
-    WiFiClient client;
-    client.setTimeout(NTFY_CONNECT_TIMEOUT_MS);
-
-    if (!client.connect(NTFY_HOST, NTFY_PORT)) {
-        LOG("NOTIF", "Connect to %s:%d failed", NTFY_HOST, NTFY_PORT);
-        dataLogger.logNotification("notif_send_fail", message, false);
+void NotificationManager::flushPendingDone() {
+    const LastCleanStats& stats = history.getLastCleanStats();
+    bool finalized = stats.sessionId != doneTriggerSessionId;
+    bool timedOut = (millis() - donePendingSinceMs) >= NTFY_DONE_PENDING_TIMEOUT_MS;
+    if (!finalized && !timedOut)
         return;
+
+    // If stopCollection finalized after we triggered, sessionId moved and stats
+    // are fresh; if we timed out, fire bare without stats rather than stale.
+    sendDoneNotification(doneTopic, doneHostname, finalized && stats.valid);
+    donePending = false;
+}
+
+void NotificationManager::sendDoneNotification(const String& topic, const String& hostname, bool withStats) {
+    String msg = hostname + ": Cleaning done";
+    if (withStats) {
+        const LastCleanStats& stats = history.getLastCleanStats();
+        long mins = stats.durationSec / 60;
+        msg += "\n" + String(mins) + "min";
+        msg += " | " + String(stats.areaCoveredM2, 1) + "m2";
+        msg += " | " + String(stats.distanceM, 0) + "m";
+        if (stats.batteryStart >= 0 && stats.batteryEnd >= 0) {
+            msg += " | " + String(stats.batteryStart) + "% -> " + String(stats.batteryEnd) + "%";
+        }
+    }
+    sendNotification(topic, "white_check_mark", msg);
+}
+
+void NotificationManager::sendNotification(const String& topic, const String& tags, const String& message) {
+    LOG("NOTIF", "Sending: [%s] %s", tags.c_str(), message.c_str());
+
+    const Settings& cfg = settings.get();
+    String host = cfg.ntfyServer.isEmpty() ? NTFY_DEFAULT_HOST : cfg.ntfyServer;
+    bool useHttps = !cfg.ntfyServer.isEmpty(); // Custom servers use HTTPS; ntfy.sh uses plain HTTP
+
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
+    Client *client;
+
+    if (useHttps) {
+        secureClient.setInsecure(); // Skip cert validation — self-hosted server
+        secureClient.setTimeout(NTFY_CONNECT_TIMEOUT_MS);
+        if (!secureClient.connect(host.c_str(), 443)) {
+            LOG("NOTIF", "TLS connect to %s:443 failed", host.c_str());
+            dataLogger.logNotification("notif_send_fail", message, false);
+            return;
+        }
+        client = &secureClient;
+    } else {
+        plainClient.setTimeout(NTFY_CONNECT_TIMEOUT_MS);
+        if (!plainClient.connect(host.c_str(), 80)) {
+            LOG("NOTIF", "Connect to %s:80 failed", host.c_str());
+            dataLogger.logNotification("notif_send_fail", message, false);
+            return;
+        }
+        client = &plainClient;
     }
 
-    client.print("POST /" + topic + " HTTP/1.1\r\n");
-    client.print("Host: " NTFY_HOST "\r\n");
-    client.print("Content-Type: text/plain\r\n");
-    client.print("Title: " + title + "\r\n");
-    client.print("Tags: " + tags + "\r\n");
-    client.print("Content-Length: " + String(message.length()) + "\r\n");
-    client.print("Connection: close\r\n");
-    client.print("\r\n");
-    client.print(message);
+    // Build HTTP POST request
+    client->print("POST /" + topic + " HTTP/1.1\r\n");
+    client->print("Host: " + host + "\r\n");
+    client->print("Content-Type: text/plain\r\n");
+    client->print("Tags: " + tags + "\r\n");
+    client->print("Content-Length: " + String(message.length()) + "\r\n");
+    if (!cfg.ntfyToken.isEmpty()) {
+        client->print("Authorization: Bearer " + cfg.ntfyToken + "\r\n");
+    }
+    client->print("Connection: close\r\n");
+    client->print("\r\n");
+    client->print(message);
 
     // Read just the HTTP status line (e.g. "HTTP/1.1 200 OK\r\n")
     bool ok = false;
-    String statusLine = client.readStringUntil('\n');
+    String statusLine = client->readStringUntil('\n');
     if (statusLine.length() > 0) {
         int spaceIdx = statusLine.indexOf(' ');
         if (spaceIdx > 0) {
@@ -145,12 +235,12 @@ void NotificationManager::sendNotification(const String& topic, const String& ta
         }
     }
 
-    client.stop();
+    client->stop();
 
     dataLogger.logNotification("notif_sent", message, ok);
 }
 
 void NotificationManager::sendTestNotification(const String& topic) {
     const String& hostname = settings.get().hostname;
-    sendNotification(topic, "bell", hostname, "Test notification");
+    sendNotification(topic, "bell", hostname + ": Test notification");
 }

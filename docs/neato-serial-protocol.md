@@ -128,7 +128,6 @@ Robot GND -> ESP GND. The robot provides 3.3V to power the ESP.
     (`GetTime`) is stuck at `Sunday 0:00:00` and cannot be written. Use `SetTime All` instead,
     which updates the real RTC visible via `GetVersion` `Time Local`/`Time UTC` fields.
 - `SetNTPTime` — Instruct the robot to sync its clock from NTP servers (D7 only, requires robot WiFi)
-- `SetWallFollower [Enable|Disable]` — Enable/disable wall follower
 - `TestMode On/Off` — Enable/disable test mode
 - `DiagTest [TestsOff|DrivePath|DriveForever|MoveAndBump|DropTest|...]` — Execute test modes
 - `Upload [dump|code|sound|LDS] [xmodem] [size N] [noburn] [readflash] [reboot]` — Upload new firmware

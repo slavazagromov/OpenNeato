@@ -137,6 +137,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/sensors:
+    get:
+      tags:
+        - Sensors
+      summary: Get digital sensor data (dustbin, bumpers, wheel lift, DC jack)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DigitalSensorData"
+        "504":
+          description: robot timeout
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/state:
     get:
       tags:
@@ -855,6 +873,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/nogo/config:
+    get:
+      tags:
+        - History
+      summary: Get the passive no-go guard configuration
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoGoConfig"
+    put:
+      tags:
+        - History
+      summary: Validate, store, and activate passive no-go geometry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoGoConfig"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoGoConfig"
+        "400":
+          description: Invalid no-go configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/nogo/status:
+    get:
+      tags:
+        - History
+      summary: Get active no-go guard runtime status
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoGoStatus"
+  /api/nogo/bumper-test:
+    post:
+      tags:
+        - Actions
+      summary: Pulse one physical bumper relay and verify the robot sensor bit
+      description: Available only on the original ESP32 build. Blocked while a cleaning run is active.
+      parameters:
+        - name: channel
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - left_whisker
+              - left_front
+              - right_front
+              - right_whisker
+      responses:
+        "200":
+          description: Relay pulse completed and robot bumper sensors were read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BumperTestResult"
+        "400":
+          description: Missing or invalid channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A cleaning run or another bumper pulse is active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: Physical bumper outputs are unavailable on this board
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: Robot sensor read timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/history/import:
     post:
       tags:
@@ -883,6 +996,181 @@ paths:
                 $ref: "#/components/schemas/Error"
 components:
   schemas:
+    NoGoPoint:
+      type: object
+      properties:
+        x:
+          type: number
+          format: float
+        y:
+          type: number
+          format: float
+      required:
+        - x
+        - y
+    NoGoLine:
+      type: object
+      properties:
+        points:
+          type: array
+          minItems: 2
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/NoGoPoint"
+      required:
+        - points
+    NoGoConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Arms no-go enforcement during autonomous cleaning
+        referenceSession:
+          type: string
+          description: Cleaning-history map used when drawing these dock-relative lines
+        warningDistance:
+          type: number
+          format: float
+          minimum: 0.05
+          maximum: 1
+          default: 0.2
+        noGoLines:
+          type: array
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/NoGoLine"
+      required:
+        - enabled
+        - referenceSession
+        - warningDistance
+        - noGoLines
+    NoGoStatus:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+            - physical_bumper_with_testmode_fallback
+            - lookahead_testmode_escape
+        physicalBumpers:
+          type: boolean
+        bumperPulseActive:
+          type: boolean
+        activeBumperMask:
+          type: integer
+        enabled:
+          type: boolean
+        runActive:
+          type: boolean
+        armed:
+          type: boolean
+        near:
+          type: boolean
+        breached:
+          type: boolean
+        nearCount:
+          type: integer
+        breachCount:
+          type: integer
+        escapeCount:
+          type: integer
+        failureCount:
+          type: integer
+        physicalAttemptCount:
+          type: integer
+        physicalSuccessCount:
+          type: integer
+        fallbackCount:
+          type: integer
+        bumperTestCount:
+          type: integer
+        segments:
+          type: integer
+        stage:
+          type: string
+        lastAction:
+          type: string
+        lastResult:
+          type: string
+        warningDistance:
+          type: number
+          format: float
+        lastDistance:
+          type: number
+          format: float
+        lastProjectedDistance:
+          type: number
+          format: float
+        lastX:
+          type: number
+          format: float
+        lastY:
+          type: number
+          format: float
+        lastEventMs:
+          type: integer
+        referenceSession:
+          type: string
+      required:
+        - mode
+        - physicalBumpers
+        - bumperPulseActive
+        - activeBumperMask
+        - enabled
+        - runActive
+        - armed
+        - near
+        - breached
+        - nearCount
+        - breachCount
+        - escapeCount
+        - failureCount
+        - physicalAttemptCount
+        - physicalSuccessCount
+        - fallbackCount
+        - bumperTestCount
+        - segments
+        - stage
+        - lastAction
+        - lastResult
+        - warningDistance
+        - lastDistance
+        - lastProjectedDistance
+        - lastX
+        - lastY
+        - lastEventMs
+        - referenceSession
+    BumperTestResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        channel:
+          type: string
+        requestedMask:
+          type: integer
+        detectedMask:
+          type: integer
+        detected:
+          type: boolean
+        lSideBit:
+          type: boolean
+        lFrontBit:
+          type: boolean
+        rFrontBit:
+          type: boolean
+        rSideBit:
+          type: boolean
+      required:
+        - ok
+        - channel
+        - requestedMask
+        - detectedMask
+        - detected
+        - lSideBit
+        - lFrontBit
+        - rFrontBit
+        - rSideBit
     Ok:
       type: object
       properties:
@@ -1087,6 +1375,50 @@ components:
         - cumulativeBatteryCycles
         - cumulativeCleaningTimeSeconds
         - validationCode
+    DigitalSensorData:
+      type: object
+      properties:
+        dcJackIn:
+          type: boolean
+          description: True when the external DC barrel jack is plugged in
+        dustbinIn:
+          type: boolean
+          description: True when the dustbin is seated
+        leftWheelExtended:
+          type: boolean
+          description: True when the left drive wheel is lifted off the ground
+        rightWheelExtended:
+          type: boolean
+          description: True when the right drive wheel is lifted off the ground
+        lSideBit:
+          type: boolean
+          description: Left side bumper triggered
+        lFrontBit:
+          type: boolean
+          description: Left front bumper triggered
+        lLdsBit:
+          type: boolean
+          description: Left LDS guard bumper triggered
+        rSideBit:
+          type: boolean
+          description: Right side bumper triggered
+        rFrontBit:
+          type: boolean
+          description: Right front bumper triggered
+        rLdsBit:
+          type: boolean
+          description: Right LDS guard bumper triggered
+      required:
+        - dcJackIn
+        - dustbinIn
+        - leftWheelExtended
+        - rightWheelExtended
+        - lSideBit
+        - lFrontBit
+        - lLdsBit
+        - rSideBit
+        - rFrontBit
+        - rLdsBit
     MotorData:
       type: object
       properties:
@@ -1443,9 +1775,18 @@ components:
         ntfyTopic:
           type: string
           description: ntfy.sh topic for push notifications (empty = disabled)
+        ntfyServer:
+          type: string
+          description: Custom ntfy server hostname (empty = ntfy.sh)
+        ntfyToken:
+          type: string
+          description: Access token for authenticated ntfy servers (empty = no auth)
         ntfyEnabled:
           type: boolean
           description: Global switch - must be on for any notification to fire
+        ntfyOnStart:
+          type: boolean
+          description: Notify when a cleaning cycle begins
         ntfyOnDone:
           type: boolean
           description: Notify when cleaning completes
@@ -1574,7 +1915,10 @@ components:
         - vacuumSpeed
         - sideBrushPower
         - ntfyTopic
+        - ntfyServer
+        - ntfyToken
         - ntfyEnabled
+        - ntfyOnStart
         - ntfyOnDone
         - ntfyOnError
         - ntfyOnAlert

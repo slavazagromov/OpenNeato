@@ -1,40 +1,114 @@
-> [!IMPORTANT]
-> **Current Home Assistant + physical no-go development:** see the
-> [`feature/nogo-physical-bumpers` branch](https://github.com/slavazagromov/OpenNeato/tree/feature/nogo-physical-bumpers)
-> and [draft pull request #2](https://github.com/slavazagromov/OpenNeato/pull/2).
-> It combines the OpenNeato firmware with the Home Assistant integration and adds four resistor-driven
-> PhotoMOS bumper/whisker switches. The custom code was read, reviewed, and rewritten by OpenAI Codex.
-> **On-robot hardware testing is pending, so the experimental code has not been merged into `main`.**
-
-[![CI](https://github.com/renjfk/OpenNeato/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/renjfk/OpenNeato/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/renjfk/OpenNeato)](https://github.com/renjfk/OpenNeato/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/renjfk/OpenNeato/total)](https://github.com/renjfk/OpenNeato/releases)
+[![Latest Release](https://img.shields.io/github/v/release/slavazagromov/OpenNeato)](https://github.com/slavazagromov/OpenNeato/releases/latest)
+[![Upstream](https://img.shields.io/badge/upstream-renjfk%2FOpenNeato-blue)](https://github.com/renjfk/OpenNeato)
 
 <p align="center">
  <img width="192" alt="OpenNeato Icon" src="frontend/public/icon-192.png">
 </p>
 
-# OpenNeato
+# OpenNeato — Home Assistant and active no-go fork
 
-Open-source replacement for Neato's discontinued cloud and mobile app. An ESP32 bridge communicates with
-Botvac robots (D3-D7) over UART and exposes a local web UI over WiFi — no cloud, no app, no account required.
+This repository combines two OpenNeato code lines into one project:
 
-> [!NOTE]
-> This is an early beta - things may break, rough edges are expected, and the API may change.
-> If you run into problems, a [Discussion](https://github.com/renjfk/OpenNeato/discussions)
-> or [issue](https://github.com/renjfk/OpenNeato/issues) is always welcome.
+1. [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato), which supplies the ESP32 robot bridge, local web
+   interface, firmware, and flash tool; and
+2. the Home Assistant-focused [Leicas/OpenNeato](https://github.com/Leicas/OpenNeato) fork, including the
+   HACS integration under [`custom_components/openneato/`](custom_components/openneato/).
+
+The combined project adds an active no-go guard, Home Assistant map editor, robot-side enforcement, status
+telemetry, and a stationary hardware test panel. This custom system was **engineered and implemented by
+OpenAI Codex**, with concept guidance, physical fabrication, real-robot testing, and project ownership by
+**Stanislav “Stan” Zagromov ([@slavazagromov](https://github.com/slavazagromov))**. This credit applies to this
+fork's custom work; the original upstream projects retain their own authorship and licenses.
+
+> [!WARNING]
+> **Native physical-bumper no-go avoidance passed on a real Botvac D5 on September 10, 2026.**
+> Firmware `1.24.0-nogo.7-native-timing1` used a 750 ms PhotoMOS contact and a 2-second observation
+> window. The first controlled encounter reported one physical attempt, one native success, zero fallbacks,
+> and zero failed steps. This remains experimental motion-control firmware: never use a software line as
+> the only protection at stairs or another fall hazard.
+
+### Verified moving field tests
+
+The complete deployed path is now proven: the SkyDash/OpenNeato Home Assistant integration writes saved
+no-go geometry with `openneato/nogo_set`; the ESP32 validates and persists it; the guard arms when an
+autonomous cleaning run begins; and the four PhotoMOS outputs emulate the robot's real bumper contacts.
+
+The first moving test on September 10, 2026 used the shorter 300 ms pulse and safely completed four avoidance
+cycles through the TestMode reverse/turn fallback with zero failed steps. That proved map translation,
+look-ahead detection, enforcement, telemetry, and fallback safety, but not the native bumper response.
+
+A second controlled test later that day validated the longer timing on a Botvac D5. After returning the robot
+from a stale diagnostic `UIMGR_STATE_TESTMODE` state with `TestMode Off`, a 1.2 m square was armed and house
+cleaning started. On the first boundary encounter, `/api/nogo/status` reported:
+
+| Counter/result | Verified value |
+| --- | ---: |
+| `physicalAttemptCount` | 1 |
+| `physicalSuccessCount` | 1 |
+| `fallbackCount` | 0 |
+| `failureCount` | 0 |
+| `escapeCount` | 1 |
+| `lastAction` | `physical_bumper_escape_complete` |
+| `lastResult` | `ok` |
+
+The guard detected the line before crossing it, pulsed the appropriate physical-bumper pair, observed the
+native cleaner move/turn away, and entered cooldown without pausing, entering TestMode, or using the software
+fallback. The temporary square was then disabled and the robot was stopped without an error.
+
+The stationary diagnostic also verified all four independent electrical paths end-to-end:
+
+| Diagnostic channel | Requested mask | Only asserted robot bit | Result |
+| --- | ---: | --- | --- |
+| Left outer whisker / GPIO25 | 1 | `lSideBit` | PASS |
+| Left inner/front / GPIO26 | 2 | `lFrontBit` | PASS |
+| Right inner/front / GPIO27 | 4 | `rFrontBit` | PASS |
+| Right outer whisker / GPIO14 | 8 | `rSideBit` | PASS |
+
+Every diagnostic request returned HTTP 200 with `detected: true`. Post-test status confirmed
+`activeBumperMask: 0`, `bumperPulseActive: false`, and all four physical sensor bits released.
+
+## Four-channel physical bumper interface
+
+The original ESP32 WROOM32 build drives four normally-open Omron G3VM-61A1 PhotoMOS relays. Each relay input
+is wired from its ESP32 GPIO through a **330 ohm series resistor**, with pin 2 returning to any ESP32 GND.
+The isolated relay output (pins 3 and 4, no polarity) is placed in parallel with the corresponding Neato
+bumper/whisker switch. The validated build holds the contact for **750 ms** and observes the robot for **2 seconds** before using the safety fallback. This timing passed a controlled real-robot native-avoidance test on September 10, 2026.
+
+Directions below are from the robot's perspective while driving forward:
+
+| Robot contact | ESP32 GPIO | PhotoMOS input wiring | Robot sensor bit |
+| --- | ---: | --- | --- |
+| Left outer whisker | 25 | GPIO25 → 330 Ω → pin 1; pin 2 → GND | `lSideBit` |
+| Left inner/front bumper | 26 | GPIO26 → 330 Ω → pin 1; pin 2 → GND | `lFrontBit` |
+| Right inner/front bumper | 27 | GPIO27 → 330 Ω → pin 1; pin 2 → GND | `rFrontBit` |
+| Right outer whisker | 14 | GPIO14 → 330 Ω → pin 1; pin 2 → GND | `rSideBit` |
+
+For full behavior, API endpoints, safeguards, and the test sequence, see
+[`docs/nogo-guard.md`](docs/nogo-guard.md). Test each channel while the robot is charged, idle, and docked via
+**Settings → Diagnostics → Physical bumper wiring** before attempting a moving no-go test.
 
 > [!IMPORTANT]
-> **Now in development:**
-[Guided Clean - zone cleaning, no-go lines, and map-based navigation](https://github.com/renjfk/OpenNeato/issues/68).
+> **If you want the stable standalone web UI without this experimental hardware**, use upstream
+> [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato) directly — it has the original maintainer, release
+> cadence, and live demo.
 >
-> Select zones on a previously recorded map, draw no-go lines, and let the robot clean exactly where you want.
-> Follow the issue for progress updates and sub-task tracking.
+> **Use this fork if** you run Home Assistant and want the robot exposed as a first-class HA device, or if you
+> are helping validate the active no-go guard and four-channel physical bumper interface.
+
+The upstream project is an open-source replacement for Neato's discontinued cloud and mobile app: an ESP32
+bridge that talks to Botvac robots (D3-D7) over UART and exposes a local web UI over WiFi — no cloud, no app,
+no account required.
+
+> [!NOTE]
+> Both upstream and this fork are early beta. Rough edges are expected. For changes specific to this combined
+> fork, open an [issue here](https://github.com/slavazagromov/OpenNeato/issues). For an unmodified upstream
+> firmware/frontend/flash-tool bug, file against [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato/issues).
 
 > [!TIP]
-> Want to get a feel for OpenNeato without hardware? Open the [live demo](https://openneato-demo.renjfk.com/).
-> Demo states can be selected with `?scenario=...`; see [mock scenarios](docs/mock-scenarios.md).
+> Want to get a feel for the underlying web UI without hardware? Open the upstream
+> [live demo](https://openneato-demo.renjfk.com/). Demo states can be selected with `?scenario=...`; see
+> [mock scenarios](docs/mock-scenarios.md).
 
 |                Dashboard                 |                  Manual Drive                  |                    Cleaning History                    |
 |:----------------------------------------:|:----------------------------------------------:|:------------------------------------------------------:|
@@ -44,13 +118,19 @@ Botvac robots (D3-D7) over UART and exposes a local web UI over WiFi — no clou
 |:----------------------------------------:|:--------------------------------------:|:--------------------------------------:|
 | ![Clean Map](screenshots/clean-map.webp) | ![Schedule](screenshots/schedule.webp) | ![Settings](screenshots/settings.webp) |
 
-## Motivation
+## About the underlying project (upstream)
+
+The sections below describe the upstream [renjfk/OpenNeato](https://github.com/renjfk/OpenNeato) project that
+this fork builds on — the ESP32 bridge firmware, standalone web UI, and flash tool. **None of this is unique
+to this fork**; it's reproduced here so HA users have full context on what's running behind the integration.
+If you only want the HA bits, you can skip ahead to the [Home Assistant section](#home-assistant-integration)
+below.
 
 Neato shut down their cloud services and mobile app, leaving perfectly functional robot vacuums without remote
 control or scheduling. OpenNeato brings them back to life with a small ESP32 board wired to the robot's debug
 port, giving you a local web interface that works without any external dependencies.
 
-## Features
+### Upstream web UI features
 
 - **Dashboard** with live robot status, battery level, cleaning state, WiFi signal, and storage usage
 - **House and spot cleaning** with pause/resume/stop/dock controls that adapt to the current state
@@ -83,6 +163,153 @@ port, giving you a local web interface that works without any external dependenc
 The frontend is a lightweight SPA that gets gzipped and embedded directly into the firmware binary, so a single
 OTA update covers both firmware and UI. Mobile-friendly, dark theme by default.
 
+## Home Assistant Integration
+
+This fork ships a HACS-installable Home Assistant custom integration in
+[`custom_components/openneato/`](custom_components/openneato/). Once installed it discovers your OpenNeato bridge
+by IP/hostname and exposes the robot as a full HA device — no YAML, no extra add-ons.
+
+> [!NOTE]
+> The HA integration is the primary differentiator of this fork. The firmware, frontend, and flash tool track
+> upstream [`renjfk/OpenNeato`](https://github.com/renjfk/OpenNeato) closely. If you only want the standalone web
+> UI, use upstream directly.
+
+### Home Assistant no-go workflow
+
+Home Assistant is not merely displaying the robot in this fork. The custom
+integration provides the map editor and sends the saved geometry to the ESP32:
+
+1. Add `type: custom:openneato-replay-card` to a Lovelace dashboard. SkyDash
+   uses one replay card for each robot on its **Vacuums** tab, alongside the
+   vacuum controls, schedule, notifications, Wi-Fi/error status, last-clean
+   statistics, maintenance buttons, and robot web-interface link.
+2. In the replay card, select a completed cleaning session whose floor plan
+   aligns with the room, then click **No-go lines**.
+3. Tap the map to place at least two points. Use **New line** for another
+   barrier and **Undo** to correct a point.
+4. Set **Guard on**, then click **Save**. Older passive builds called this
+   control **Observer on**; the active implementation deliberately calls it
+   **Guard on** because it now causes a physical avoidance response.
+5. A successful save reports `N line(s) armed for enforcement`. The integration
+   transforms the card coordinates into the robot's dock-relative frame and
+   sends the reference session, 0.20 m warning distance, enabled state, and
+   line geometry to the ESP32. The ESP32 validates and persists it in
+   `/nogo.json`, so enforcement does not depend on the dashboard remaining
+   open.
+
+The HA entity ID retains the older word for compatibility:
+`binary_sensor.<robot>_no_go_observer_armed`. Its displayed name is **No-go
+guard armed**. The integration also exposes **Near no-go line**, **No-go line
+breached**, line distance, guard stage, last action/result, near/breach counts,
+completed escapes, and failed-step counts. It fires `openneato_nogo_near` and
+`openneato_nogo_breached` events on new transitions.
+
+During a fallback maneuver, the integration keeps the vacuum entity in
+`cleaning` state while the firmware briefly pauses, enters TestMode, reverses,
+turns, resumes, and cools down. This prevents Home Assistant automations from
+mistaking one avoidance maneuver for a stopped and newly started cleaning run.
+
+> [!NOTE]
+> If the replay card says **No-go unavailable**, Home Assistant is installed but
+> the connected robot does not expose the matching `/api/nogo/*` firmware
+> endpoints. Both the integration from this branch and the combined robot
+> firmware must be installed.
+
+### Install via HACS
+
+1. In HACS, add this fork as a **custom repository**: `https://github.com/slavazagromov/OpenNeato` (category:
+   *Integration*).
+2. Search for **OpenNeato** in HACS and install.
+3. Restart Home Assistant.
+4. **Settings → Devices & Services → Add Integration → OpenNeato** and enter the bridge hostname or IP
+   (e.g. `neato.local` or `192.168.1.42`).
+
+The integration polls `/api/*` over your LAN every 5 seconds (`local_polling`). No cloud round-trip, no
+external dependencies. Requires firmware `1.0+`; battery diagnostics need firmware `0.13+` (upstream PR #121).
+
+### What you get
+
+A single device with the following entity groups:
+
+- **Vacuum** (`vacuum.openneato_<name>`) — start/stop/pause/dock/locate/spot-clean, battery level, status,
+  fan speed presets (Eco/Auto/Intense), error reporting. Works with all the standard vacuum cards.
+- **Map card** — [`openneato-replay-card`](custom_components/openneato/www/openneato-replay-card.js), a
+  canvas Lovelace card that draws the accumulated LIDAR floorplan and replays a cleaning session over it,
+  with pan, zoom, a timeline scrubber, and the active no-go editor. It reads the `openneato/session`,
+  `openneato/sessions`, `openneato/nogo_get`, and `openneato/nogo_set` websocket commands directly. It
+  replaces the former `LIDAR map` and `Cleaning replay` camera entities, which are gone.
+- **Sensors** — battery level/voltage/current/temperature, battery cycle count, cumulative cleaning time,
+  WiFi RSSI, free heap, storage used, uptime, motor RPMs, error code/message, plus "last clean" stats
+  (duration, area covered, distance, battery used, mode, end time) pulled from the on-device history.
+- **Binary sensors** — charging, external power, battery over-temp, battery failure, empty fuel, error
+  active, NTP synced, dustbin seated, left/right wheel lifted, DC jack, and the six bumper contacts
+  (front/side/LDS, left and right — disabled by default, since they toggle on every bump), plus no-go guard
+  armed, near-line, and breached states.
+- **Switches** — eco mode, intense clean, bin-full detect, wall follower, schedule on/off, button-click
+  sounds, melodies, warnings, stealth LED, remote syslog, WiFi AP fallback, and per-event push
+  notifications (start/done/error/alert/docking).
+- **Text** — syslog server IP, ntfy topic, ntfy server, ntfy token (full push-notification config from HA).
+- **Numbers** — brush RPM, vacuum speed, side-brush power, stall threshold.
+- **Select** — navigation mode (Normal / Gentle / Deep / Quick).
+- **Buttons** — restart bridge, restart robot, shutdown robot, locate, clear errors, format filesystem
+  (diagnostic, disabled by default), **new battery** (resets fuel-gauge calibration after a physical pack
+  swap, disabled by default for safety).
+
+Every entity is translated via `strings.json`, and diagnostic-class entities (voltages, currents, raw
+sensor states) are tagged so they cluster cleanly under HA's Diagnostic section.
+
+### Notes for setup
+
+- **The map card needs no installation** — the integration serves
+  `www/openneato-replay-card.js` itself and registers the script tag, so there is nothing to copy into
+  `/config/www/` and no Lovelace resource to add. Just add a manual card with
+  `type: custom:openneato-replay-card`. The browser cache is keyed on the integration version, so the
+  card refreshes on upgrade rather than needing a hard reload. The walls come from the integration's own
+  LIDAR mapper, which accumulates an occupancy grid across cleanings — the plan sharpens with each run.
+- **Reading the diagnostics** — two field names are misleading and the integration corrects for them:
+  `errorCode` returns **200** (`UI_ALERT_INVALID`) when nothing is wrong, so the *Error code* sensor
+  reports *unknown* instead; and `chargerMAH` / `dischargeMAH` are **milliamps, not milliamp-hours**
+  (measured decreasing while the robot discharged), so they are exposed with a current device class.
+  `dcJackIn` is the robot's own barrel jack, not the dock — *on dock* is `extPwrPresent`.
+- **Coordinator resilience** — the integration tolerates a single hung endpoint without going into
+  "requires attention" state. State / charger / system are critical; anything else (errors, motors,
+  history) falls back to the last known value during transient ESP32 serial hangs.
+- **No Pillow declared dependency** — the LIDAR mapper writes its wall grid with Pillow, which already
+  ships with HA Core, so the integration's `manifest.json` keeps `"requirements": []`. Nothing extra to
+  install.
+- **ntfy + custom servers** — point `ntfy_server` at a self-hosted instance and `ntfy_token` at a Bearer
+  token for authenticated push. Empty server defaults to `ntfy.sh`; empty token is unauthenticated.
+
+### Version history
+
+Full per-version notes live in [`custom_components/openneato/CHANGELOG.md`](custom_components/openneato/CHANGELOG.md).
+Highlights:
+
+- **Current physical test branch** — active no-go status and events; replay-card guard editor; map/robot
+  coordinate translation; physical-bumper-first avoidance with the direct TestMode escape retained as
+  fallback; HA vacuum state stays continuously `cleaning` through an avoidance maneuver.
+
+- **1.12** — the `openneato-replay-card` canvas card replaces the `LIDAR map` and `Cleaning replay`
+  cameras (`Platform.CAMERA` dropped); self-calibrating LIDAR floorplan with per-session alignment;
+  HA-settable 7-day schedule (14 `time` entities + 14 slot switches); six bumper binary sensors, off by
+  default; `chargerMAH` / `dischargeMAH` corrected from mAh to mA; the `errorCode` 200 sentinel no longer
+  reported as an error; `Dock contact` renamed `DC jack`; static floorplan-background option removed.
+- **1.11** — added `notify_on_start` and `ap_fallback_on_disconnect` switches; ntfy topic/server/token text
+  entities for full HA-side push config.
+- **1.10** — battery diagnostics (current, voltage, cycles, cumulative cleaning time) on top of firmware
+  PR #121, `New battery` calibration button, UTF-8-tolerant `/api/version` parsing.
+- **1.9** — fixed cameras stuck on the idle placeholder (`get_encoding()` crash on streamed bodies).
+- **1.6** — `Cleaning replay` camera (animated GIF time-lapse), `/api/history` corruption-tolerant parsing,
+  history filename validation + 2 MB response cap (LAN-MITM mitigation).
+- **1.3** — `LIDAR map` camera ported from the frontend renderer; self-managed polling.
+- **1.2** — last-clean stats sensors; dropped Pillow from declared deps.
+
+### Reporting integration bugs
+
+Use this fork's [issue tracker](https://github.com/slavazagromov/OpenNeato/issues) for anything that lives under
+`custom_components/openneato/`. For firmware, frontend, or flash-tool issues, upstream
+[renjfk/OpenNeato](https://github.com/renjfk/OpenNeato/issues) is the right place.
+
 ## Supported Robots
 
 Neato Botvac D3 through D7. D8/D9/D10 are NOT supported (different board, password-locked serial port).
@@ -112,8 +339,9 @@ Requires [Node.js](https://nodejs.org/) 22+, [PlatformIO CLI](https://platformio
 and [Go](https://go.dev/) 1.26+.
 
 ```bash
-git clone https://github.com/renjfk/OpenNeato.git
+git clone https://github.com/slavazagromov/OpenNeato.git
 cd OpenNeato
+git switch feature/nogo-physical-bumpers
 
 # Build frontend (generates web_assets.h)
 cd frontend && npm ci && npm run build && cd ..

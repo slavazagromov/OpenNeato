@@ -131,11 +131,15 @@ bool Scheduler::handleScheduledCleaning(const Settings& s, int day, int nowMins)
         }
 
         bool restartFirst = s.restartBeforeClean;
+        // Claim before the asynchronous state read so the next scheduler tick
+        // cannot enqueue the same cleaning slot again while the UART is busy.
+        firedSlots[si] = schedMins;
         serial.getState([this, si, day, schedMins, slotStr, restartFirst](bool ok, const RobotState& state) {
             if (!ok) {
                 LOG("SCHED", "GetState failed, cannot check robot state for slot %s", slotStr.c_str());
                 dataLogger.logGenericEvent("scheduler_state_error",
                                            {{"day", String(day), FIELD_INT}, {"slot", slotStr, FIELD_STRING}});
+                firedSlots[si] = -1;
                 return;
             }
 
@@ -169,8 +173,6 @@ bool Scheduler::handleScheduledCleaning(const Settings& s, int day, int nowMins)
             } else {
                 triggerClean(day, si);
             }
-
-            firedSlots[si] = schedMins;
         });
         return true;
     }

@@ -42,6 +42,11 @@
 #define NEATO_DEFAULT_RX_PIN 4
 #endif
 #define MAX_GPIO_PIN 21
+#elif CONFIG_IDF_TARGET_ESP32C6
+#define RESET_BUTTON_PIN 9
+#define NEATO_DEFAULT_TX_PIN 16
+#define NEATO_DEFAULT_RX_PIN 17
+#define MAX_GPIO_PIN 30
 #elif CONFIG_IDF_TARGET_ESP32S3
 #define RESET_BUTTON_PIN 0
 #define NEATO_DEFAULT_TX_PIN 17
@@ -53,7 +58,17 @@
 
 // Actual UART pins are stored in NVS and configurable via settings API.
 #define NEATO_BAUD_RATE 115200
-#define NEATO_UART_RX_BUFFER 4096 // Default 256 bytes overflows during GetLDSScan (~5KB response)
+// Must hold a whole GetLDSScan response, not most of one. Measured on a
+// Botvac D6 the reply is 6427 bytes; at 115200 baud it takes ~560 ms to
+// arrive, while 4096 bytes fill in 355 ms. The buffer is drained by
+// NeatoSerial::tick() from the main loop, so any stall longer than that --
+// an SPIFFS write, a WiFi retransmit -- dropped bytes mid-scan and the robot
+// reported UI_ERROR_LDS_MISSED_PACKETS. 8192 holds the full reply with room
+// to spare, for 4 KB of a 320 KB budget that is 18% used.
+#define NEATO_UART_RX_BUFFER 8192
+// Bytes reserved for the /api/lidar JSON document: 360 points at ~50 chars
+// plus the header, measured at 19355 on this robot, with headroom.
+#define LDS_JSON_RESERVE 20480
 
 // Neato command queue timing (milliseconds)
 #define NEATO_CMD_TIMEOUT_MS 3000
@@ -163,11 +178,14 @@ enum CommandStatus {
 
 // NVS keys — Notifications
 #define NVS_KEY_NTFY_TOPIC "ntfy_topic"
+#define NVS_KEY_NTFY_SERVER "ntfy_server"
+#define NVS_KEY_NTFY_TOKEN "ntfy_token"
 #define NVS_KEY_NTFY_ENABLED "ntfy_enabled"
 #define NVS_KEY_NTFY_ON_DONE "ntfy_on_done"
 #define NVS_KEY_NTFY_ON_ERR "ntfy_on_err"
 #define NVS_KEY_NTFY_ON_ALERT "ntfy_on_alrt"
 #define NVS_KEY_NTFY_ON_DOCK "ntfy_on_dock"
+#define NVS_KEY_NTFY_ON_START "ntfy_on_strt"
 
 // NVS keys — Schedule (ESP32-managed, not robot serial)
 #define NVS_KEY_SCHED_ENABLED "sched_on"
@@ -192,6 +210,13 @@ enum CommandStatus {
 #define HISTORY_INTERVAL_IDLE_MS 30000 // Poll state every 30s when idle (detect cleaning start)
 #define HISTORY_INTERVAL_ACTIVE_MS 2000 // Poll state/pose every 2s during active cleaning (~0.6m resolution at 300mm/s)
 #define HISTORY_FLUSH_INTERVAL_MS 30000 // Flush buffered pose snapshots to disk every 30 seconds
+// While something is reading the session the robot is still writing -- the
+// live map in Home Assistant -- 30s of buffering is what the viewer sees as
+// lag: poses are taken every 2s but only reach the file in 30s batches.
+// Flushing faster costs flash writes, so it is done only while a reader is
+// actually there, and it stops on its own once they stop asking.
+#define HISTORY_FLUSH_INTERVAL_WATCHED_MS 3000 // Flush every 3s while watched
+#define HISTORY_WATCHER_TIMEOUT_MS 30000 // A reader counts as gone after 30s of silence
 #define HISTORY_COMPRESS_INTERVAL_MS 50 // Fast tick during post-session compression (512B/tick)
 #define HISTORY_DIR "/history" // SPIFFS directory for session files
 #define HISTORY_MAX_FS_PERCENT 50 // Delete oldest sessions when history dir exceeds this share of filesystem
@@ -200,6 +225,12 @@ enum CommandStatus {
 #define HISTORY_AREA_CELL_M 0.5f // Coarse grid cell size in meters for visited-area estimation
 #define HISTORY_MIN_SNAPSHOTS 3 // Discard sessions with fewer snapshots (too short to render a useful map)
 #define HISTORY_IMPORT_MAX_BYTES 262144 // 256 KB max import file size (2h clean at 2s intervals ~ 180KB)
+
+// Passive no-go guard. Geometry is stored once when explicitly saved and kept
+// in RAM while cleaning, so pose observation never writes to flash.
+#define NOGO_CONFIG_MAX_BYTES 8192
+#define NOGO_MAX_LINES 16
+#define NOGO_MAX_POINTS_PER_LINE 32
 
 // Task Watchdog Timer (TWDT) — hardware watchdog that resets the ESP32 if
 // loop() stops running (deadlock, infinite loop, blocking I/O). The main task

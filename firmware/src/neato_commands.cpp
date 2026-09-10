@@ -217,6 +217,7 @@ std::vector<Field> ChargerData::toFields() const {
             {"vExtV", String(vExtV, 2), FIELD_FLOAT},
             {"chargerMAH", String(chargerMAH), FIELD_INT},
             {"dischargeMAH", String(dischargeMAH), FIELD_INT},
+            {"battTempC", String(battTempC), FIELD_INT},
     };
 }
 
@@ -226,6 +227,9 @@ std::vector<Field> BatteryAnalogData::toFields() const {
             {"batteryCurrentMA", String(batteryCurrentMA), FIELD_INT},
             {"batteryTemperatureC", String(batteryTemperatureC, 2), FIELD_FLOAT},
             {"externalVoltageV", String(externalVoltageV, 3), FIELD_FLOAT},
+            {"wallSensorMM", String(wallSensorMM), FIELD_INT},
+            {"dropSensorLeftMM", String(dropSensorLeftMM), FIELD_INT},
+            {"dropSensorRightMM", String(dropSensorRightMM), FIELD_INT},
     };
 }
 
@@ -289,8 +293,17 @@ std::vector<Field> ErrorData::toFields() const {
 // -- LDS scan special serializers --------------------------------------------
 
 String LdsScanData::toJson() const {
-    String json = "{\"rotationSpeed\":" + String(rotationSpeed, 2) + ",\"validPoints\":" + String(validPoints) +
-                  ",\"points\":[";
+    String json;
+    // Reserve the whole thing up front. This document runs about 19 KB and was
+    // being grown by some 1400 concatenations; Arduino's String doubles its
+    // buffer, so the last few steps need the old buffer and the new one live at
+    // once -- roughly 57 KB of a heap that sits near 93 KB free and fragmented.
+    // When that allocation failed, String silently became empty and the route
+    // answered 200 with no body. Measured on an idle bridge: 16 of 25 requests
+    // to /api/lidar came back empty. One reservation removes the ladder.
+    json.reserve(LDS_JSON_RESERVE);
+    json += "{\"rotationSpeed\":" + String(rotationSpeed, 2) + ",\"validPoints\":" + String(validPoints) +
+            ",\"points\":[";
     for (int i = 0; i < 360; i++) {
         if (i > 0)
             json += ",";
@@ -440,6 +453,19 @@ bool parseBatteryAnalogData(const String& raw, BatteryAnalogData& out) {
         out.externalVoltageV = csvLastField(val).toFloat() / 1000.0f;
         found = true;
     }
+    // Already millimetres in the robot's own output, so no conversion.
+    if (findCsvValue(raw, "WallSensor", val)) {
+        out.wallSensorMM = csvLastField(val).toInt();
+        found = true;
+    }
+    if (findCsvValue(raw, "DropSensorLeft", val)) {
+        out.dropSensorLeftMM = csvLastField(val).toInt();
+        found = true;
+    }
+    if (findCsvValue(raw, "DropSensorRight", val)) {
+        out.dropSensorRightMM = csvLastField(val).toInt();
+        found = true;
+    }
     return found;
 }
 
@@ -489,6 +515,8 @@ bool parseChargerData(const String& raw, ChargerData& out) {
         out.chargerMAH = val.toInt();
     if (findCsvValue(raw, "Discharge_mAH", val))
         out.dischargeMAH = val.toInt();
+    if (findCsvValue(raw, "BattTempCAvg", val))
+        out.battTempC = val.toInt();
     return out.fuelPercent >= 0;
 }
 
