@@ -315,6 +315,12 @@
       }
     },
     "number": {
+      "spot_width_setting": {
+        "name": "Spot-clean width"
+      },
+      "spot_height_setting": {
+        "name": "Spot-clean height"
+      },
       "brush_rpm_setting": {
         "name": "Brush RPM"
       },

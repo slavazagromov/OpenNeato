@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <functional>
+#include <utility>
 #include <vector>
 #include "config.h"
 #include "loop_task.h"
@@ -125,6 +126,7 @@ public:
     // Called from clean() before house clean to send SetNavigationMode.
     // Returns the stored nav mode string (e.g. "Normal", "Gentle").
     void setNavModeGetter(std::function<String()> getter) { navModeGetter = getter; }
+    void setSpotDimensionsGetter(std::function<std::pair<int, int>()> getter) { spotDimensionsGetter = getter; }
 
     // The mode a clean started now would actually run with -- the same value
     // clean() sends as SetNavigationMode. CleaningHistory stamps it into the
@@ -168,6 +170,7 @@ private:
 
     // Navigation mode getter (reads from SettingsManager)
     std::function<String()> navModeGetter;
+    std::function<std::pair<int, int>()> spotDimensionsGetter;
 
     // Current command in flight
     String currentCommand;

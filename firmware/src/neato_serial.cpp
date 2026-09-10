@@ -541,9 +541,10 @@ void NeatoSerial::invalidateAll() {
 // -- Action command convenience methods --------------------------------------
 
 bool NeatoSerial::clean(const String& action, std::function<void(bool)> callback) {
-    // All cleaning control uses SetEvent — the authenticated event API that D3-D7
-    // robots use for their cloud/app protocol. This correctly transitions the UI
-    // state machine and preserves map/localization during pause/resume.
+    // Cleaning control normally uses SetEvent — the authenticated event API that
+    // D3-D7 robots use for their cloud/app protocol. Sized spot cleaning is the
+    // one exception because its dimensions are parameters of the native
+    // `Clean Spot Width ... Height ...` serial command.
     //
     // SKey must be computed at boot via initSKey(). If missing, commands will fail
     // gracefully (callback with false).
@@ -611,6 +612,15 @@ bool NeatoSerial::clean(const String& action, std::function<void(bool)> callback
         invalidateState();
         if (cleanStartCallback)
             cleanStartCallback();
+        if (spotDimensionsGetter) {
+            const std::pair<int, int> dimensions = spotDimensionsGetter();
+            const int width = constrain(dimensions.first, 100, 400);
+            const int height = constrain(dimensions.second, 100, 400);
+            const String command =
+                    String(CMD_CLEAN_SPOT) + " Width " + String(width) + " Height " + String(height);
+            LOG("NEATO", "Starting %d x %d cm spot clean", width, height);
+            return enqueue(command, wrapAction(callback), PRIORITY_HIGH);
+        }
         return enqueue(buildSetEvent(EVT_START_SPOT), wrapAction(callback), PRIORITY_HIGH);
     }
 

@@ -365,12 +365,9 @@ class OpenNeatoApiClient:
     async def clean(self, action: str) -> dict[str, Any] | str:
         """Send a clean command.
 
-        NeatoSerial::clean() recognises "dock", "pause", "stop" and "spot";
-        every other value falls through to EVT_START_HOUSE. There is no
-        "resume" action -- the robot's own state machine treats a house-clean
-        event while paused as a resume, which is why async_start() sends
-        "house" in both cases. Passing an unrecognised string here would
-        silently start a fresh house clean instead of erroring.
+        NeatoSerial::clean() recognises house, spot, pause, resume, stop, and
+        dock. Spot cleaning uses the width and height saved in firmware
+        settings; Home Assistant exposes both as Number entities.
         """
         return await self._post("/api/clean", params={"action": action})
 
