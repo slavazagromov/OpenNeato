@@ -15,6 +15,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
+from homeassistant.components.vacuum import VacuumActivity
 from homeassistant.core import HomeAssistant, callback
 
 from .const import (
@@ -22,6 +23,7 @@ from .const import (
     DOMAIN,
     HISTORY_CELL_SIZE_M,
     MAP_DEFAULT_ROTATION_OFFSET,
+    UISTATE_SUBSTRINGS,
 )
 from .replay import build_replay_session
 
@@ -63,6 +65,35 @@ def _resolve_entry(hass: HomeAssistant, entry_id: str | None) -> tuple[str, dict
     if len(candidates) == 1:
         return next(iter(candidates.items()))
     return None
+
+
+def _coordinator_reports_cleaning(coordinator: Any) -> bool:
+    """True when HA can independently tell that this robot is cleaning.
+
+    Firmware normally marks the active history file ``recording: true``. Some
+    robots occasionally miss that flag even though their uiState is clearly a
+    running clean, which made the replay card treat the growing map as a
+    completed session and stop refreshing it. Reuse the same uiState mapping
+    as the vacuum entity, plus the no-go escape state, as a conservative
+    fallback.
+    """
+    data = coordinator.data or {}
+    nogo = data.get("nogo", {})
+    if (
+        isinstance(nogo, dict)
+        and nogo.get("runActive")
+        and nogo.get("stage") not in (None, "", "idle")
+    ):
+        return True
+
+    state = data.get("state", {})
+    if not isinstance(state, dict):
+        return False
+    ui_state = str(state.get("uiState") or "")
+    return any(
+        activity == VacuumActivity.CLEANING and substring in ui_state
+        for substring, activity in UISTATE_SUBSTRINGS
+    )
 
 
 def _floorplan_payload(hass: HomeAssistant, entry_id: str) -> dict[str, Any] | None:
@@ -146,6 +177,24 @@ async def ws_list_sessions(
         # The firmware returns files in directory order; sort by session start
         # so the picker reads chronologically regardless of filesystem layout.
         sessions.sort(key=lambda s: _session_start(s), reverse=True)
+
+        # A few robots can expose the growing current file but omit its
+        # recording flag. Only promote the newest session when it has no
+        # completion summary and HA independently sees an active clean. That
+        # avoids accidentally turning yesterday's completed map into a live
+        # session if the firmware has not created today's history file yet.
+        if (
+            sessions
+            and not any(session["recording"] for session in sessions)
+            and not sessions[0].get("summary")
+            and _coordinator_reports_cleaning(coordinator)
+        ):
+            sessions[0] = {**sessions[0], "recording": True}
+            _LOGGER.debug(
+                "Replay: treating %s as recording because robot uiState is cleaning",
+                sessions[0]["name"],
+            )
+
         store[entry_id] = sessions
     else:
         # The robot is unreachable. A replay is history, though -- the parsed
@@ -510,7 +559,24 @@ def _is_recording(coordinator: Any, name: str) -> bool:
     history = (coordinator.data or {}).get("history")
     if not isinstance(history, list):
         return False
-    return any(
+
+    if any(
         isinstance(item, dict) and item.get("name") == name and item.get("recording")
         for item in history
-    )
+    ):
+        return True
+
+    # Mirror the session-list fallback so an active file with a missing
+    # firmware recording flag is neither cached as completed nor deletable.
+    if not _coordinator_reports_cleaning(coordinator):
+        return False
+
+    candidates = [
+        item
+        for item in history
+        if isinstance(item, dict) and item.get("name") and not item.get("summary")
+    ]
+    if not candidates:
+        return False
+    newest = max(candidates, key=_session_start)
+    return newest.get("name") == name
