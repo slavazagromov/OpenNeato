@@ -36,6 +36,7 @@ import {
     BRUSH_PRESETS,
     NAV_MODE_PRESETS,
     SIDE_BRUSH_PRESETS,
+    SPOT_DIMENSION_PRESETS,
     STALL_PRESETS,
     TIMEZONE_PRESETS,
     TX_POWER_PRESETS,
@@ -139,6 +140,10 @@ export function SettingsView({
         setHostname,
         navMode,
         setNavMode,
+        spotWidth,
+        setSpotWidth,
+        spotHeight,
+        setSpotHeight,
         stallThreshold,
         setStallThreshold,
         brushRpm,
@@ -832,6 +837,49 @@ export function SettingsView({
                                 How the robot navigates during house cleaning. Extra Care avoids obstacles, Deep cleans
                                 corners thoroughly.
                             </T>
+                        </div>
+                    </div>
+                </SettingsCategory>
+
+                <SettingsCategory title={t("Spot Clean")} icon={robotSvg}>
+                    <div class="settings-section">
+                        <div class="settings-tz-select-wrap">
+                            <select
+                                class="settings-tz-select"
+                                aria-label={t("Spot-clean width")}
+                                value={spotWidth}
+                                onChange={(e) => setSpotWidth(parseInt((e.target as HTMLSelectElement).value, 10))}
+                                disabled={saving}
+                            >
+                                {SPOT_DIMENSION_PRESETS.map((value) => (
+                                    <option key={value} value={value}>
+                                        {t("{value} cm", { value })}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div class="settings-robot-time">
+                            <T>Width of the area covered by Spot Clean</T>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <div class="settings-tz-select-wrap">
+                            <select
+                                class="settings-tz-select"
+                                aria-label={t("Spot-clean height")}
+                                value={spotHeight}
+                                onChange={(e) => setSpotHeight(parseInt((e.target as HTMLSelectElement).value, 10))}
+                                disabled={saving}
+                            >
+                                {SPOT_DIMENSION_PRESETS.map((value) => (
+                                    <option key={value} value={value}>
+                                        {t("{value} cm", { value })}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div class="settings-robot-time">
+                            <T>Height of the area covered by Spot Clean</T>
                         </div>
                     </div>
                 </SettingsCategory>

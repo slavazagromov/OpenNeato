@@ -30,6 +30,34 @@ class OpenNeatoNumberEntityDescription(NumberEntityDescription):
 
 NUMBER_DESCRIPTIONS: tuple[OpenNeatoNumberEntityDescription, ...] = (
     OpenNeatoNumberEntityDescription(
+        key="spot_width_setting",
+        translation_key="spot_width_setting",
+        name="Spot-clean width",
+        section="settings",
+        field="spotWidth",
+        settings_field="spotWidth",
+        native_min_value=100,
+        native_max_value=400,
+        native_step=10,
+        native_unit_of_measurement="cm",
+        icon="mdi:arrow-left-right",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    OpenNeatoNumberEntityDescription(
+        key="spot_height_setting",
+        translation_key="spot_height_setting",
+        name="Spot-clean height",
+        section="settings",
+        field="spotHeight",
+        settings_field="spotHeight",
+        native_min_value=100,
+        native_max_value=400,
+        native_step=10,
+        native_unit_of_measurement="cm",
+        icon="mdi:arrow-up-down",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    OpenNeatoNumberEntityDescription(
         key="brush_rpm_setting",
         translation_key="brush_rpm_setting",
         name="Brush RPM",
@@ -154,6 +182,14 @@ async def async_setup_entry(
 
     entities: list[OpenNeatoNumber] = []
     for description in NUMBER_DESCRIPTIONS:
+        section_data = (coordinator.data or {}).get(description.section, {})
+        if description.field not in section_data:
+            _LOGGER.debug(
+                "Skipping %s because this firmware does not expose %s",
+                description.key,
+                description.field,
+            )
+            continue
         entities.append(
             OpenNeatoNumber(
                 coordinator,

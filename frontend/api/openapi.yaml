@@ -272,6 +272,7 @@ paths:
               - house
               - spot
               - pause
+              - resume
               - stop
               - dock
       responses:
@@ -1760,6 +1761,12 @@ components:
         navMode:
           type: string
           description: 'Navigation mode for house cleaning: "Normal", "Gentle", "Deep", "Quick"'
+        spotWidth:
+          type: number
+          description: Spot-clean width in centimetres (100-400)
+        spotHeight:
+          type: number
+          description: Spot-clean height in centimetres (100-400)
         stallThreshold:
           type: number
           description: Wheel load % for stall detection (30-80)
@@ -1910,6 +1917,8 @@ components:
         - maxGpioPin
         - hostname
         - navMode
+        - spotWidth
+        - spotHeight
         - stallThreshold
         - brushRpm
         - vacuumSpeed

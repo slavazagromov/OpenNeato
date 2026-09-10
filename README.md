@@ -18,8 +18,8 @@ This repository combines two OpenNeato code lines into one project:
 The combined project adds an active no-go guard, Home Assistant map editor, robot-side enforcement, status
 telemetry, and a stationary hardware test panel. This custom system was **engineered and implemented by
 OpenAI Codex**, with concept guidance, physical fabrication, real-robot testing, and project ownership by
-the **repository owner**. This credit applies to this
-fork's custom work; the original upstream projects retain their own authorship and licenses.
+the **repository owner**. This credit applies to this fork's custom work; the original upstream projects retain
+their own authorship and licenses.
 
 > [!WARNING]
 > **Native physical-bumper no-go avoidance passed on a real Botvac D5 on September 10, 2026.**
@@ -28,22 +28,19 @@ fork's custom work; the original upstream projects retain their own authorship a
 > and zero failed steps. This remains experimental motion-control firmware: never use a software line as
 > the only protection at stairs or another fall hazard.
 
-## Tested firmware binary
+## Tested firmware downloads
 
-The exact original-ESP32/WROOM32 binary that passed the real Botvac D5 native no-go test is committed at
-[`firmware/releases/OpenNeato-ESP32-nogo-native-timing1.bin`](firmware/releases/OpenNeato-ESP32-nogo-native-timing1.bin).
-It identifies itself as `1.24.0-nogo.7-native-timing1` and uses the validated 750 ms PhotoMOS contact plus
-2-second native-response observation window.
+The tracked prerelease contains two clearly separated original-ESP32/WROOM32 downloads:
 
-SHA-256:
+- **Factory** — [`OpenNeato-ESP32-nogo-native-timing1.factory.bin`](https://github.com/slavazagromov/OpenNeato/releases/download/v1.24.0-nogo.7-native-timing1/OpenNeato-ESP32-nogo-native-timing1.factory.bin)
+  is a complete first-install image. Flash it over USB at offset `0x0`.
+- **OTA** — [`OpenNeato-ESP32-nogo-native-timing1.ota.bin`](https://github.com/slavazagromov/OpenNeato/releases/download/v1.24.0-nogo.7-native-timing1/OpenNeato-ESP32-nogo-native-timing1.ota.bin)
+  is the exact application image tested on the D5. Install it from an existing compatible OpenNeato web UI.
 
-```text
-989b28d4ce986314ea0ef72e1c64c645a45d7546e367b48732e56dda2b128e04
-```
-
-This file is for the original ESP32/WROOM32 target used in the documented four-channel build. Do not flash it
-to an ESP32-C3, C6, or S3. Existing compatible OpenNeato installations can install it through the web UI's
-firmware-update page. Source builds remain available for every supported target.
+The OTA file identifies itself as `1.24.0-nogo.7-native-timing1` and has SHA-256
+`989b28d4ce986314ea0ef72e1c64c645a45d7546e367b48732e56dda2b128e04`. Both files and the complete
+[`checksums.txt`](firmware/releases/checksums.txt) are also retained in the repository. These images are for
+the original ESP32/WROOM32 only—not ESP32-C3, C6, S2, or S3.
 
 ### Verified moving field tests
 
@@ -196,6 +193,11 @@ by IP/hostname and exposes the robot as a full HA device — no YAML, no extra a
 Home Assistant is not merely displaying the robot in this fork. The custom
 integration provides the map editor and sends the saved geometry to the ESP32:
 
+For a ready-to-customize layout, see the dependency-light
+[`Home Assistant dashboard example`](docs/home-assistant-dashboard.md). It includes
+the vacuum controls, map/no-go editor, guard diagnostics, recovery buttons, and
+adjustable spot-clean dimensions.
+
 1. Add `type: custom:openneato-replay-card` to a Lovelace dashboard. SkyDash
    uses one replay card for each robot on its **Vacuums** tab, alongside the
    vacuum controls, schedule, notifications, Wi-Fi/error status, last-clean
@@ -266,7 +268,8 @@ A single device with the following entity groups:
   sounds, melodies, warnings, stealth LED, remote syslog, WiFi AP fallback, and per-event push
   notifications (start/done/error/alert/docking).
 - **Text** — syslog server IP, ntfy topic, ntfy server, ntfy token (full push-notification config from HA).
-- **Numbers** — brush RPM, vacuum speed, side-brush power, stall threshold.
+- **Numbers** — spot-clean width/height (100–400 cm), brush RPM, vacuum speed,
+  side-brush power, and stall threshold.
 - **Select** — navigation mode (Normal / Gentle / Deep / Quick).
 - **Buttons** — restart bridge, restart robot, shutdown robot, locate, clear errors, format filesystem
   (diagnostic, disabled by default), **new battery** (resets fuel-gauge calibration after a physical pack

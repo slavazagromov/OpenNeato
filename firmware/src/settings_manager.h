@@ -29,6 +29,8 @@ struct Settings : public JsonSerializable {
     int uartRxPin = NEATO_DEFAULT_RX_PIN; // ESP GPIO <- Robot TX
     // House cleaning — sent to robot before each house clean starts
     String navMode = "Normal"; // Navigation mode: "Normal", "Gentle", "Deep", "Quick"
+    int spotWidth = 200; // Spot-clean width in cm (100-400)
+    int spotHeight = 200; // Spot-clean height in cm (100-400)
     // Manual clean motor settings
     int stallThreshold = MANUAL_STALL_LOAD_PCT; // Wheel load % for stall detection (30-80)
     int brushRpm = MANUAL_BRUSH_RPM; // Main brush RPM (500-1600)

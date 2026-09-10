@@ -1,1 +1,2 @@
-989b28d4ce986314ea0ef72e1c64c645a45d7546e367b48732e56dda2b128e04  OpenNeato-ESP32-nogo-native-timing1.bin
+989b28d4ce986314ea0ef72e1c64c645a45d7546e367b48732e56dda2b128e04  OpenNeato-ESP32-nogo-native-timing1.ota.bin
+58d5a1275b9bbbdee1aafa56fdcb236208818f06a7d719d91e9a201874465de7  OpenNeato-ESP32-nogo-native-timing1.factory.bin

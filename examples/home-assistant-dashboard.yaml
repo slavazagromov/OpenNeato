@@ -1,0 +1,137 @@
+# OpenNeato dashboard example for Home Assistant 2026.9+
+#
+# Before pasting this as a raw dashboard configuration:
+# 1. Replace every `my_neato` entity suffix with the IDs Home Assistant created.
+# 2. Replace REPLACE_WITH_CONFIG_ENTRY_ID with the OpenNeato config-entry ID.
+#    Open Settings > Devices & services > OpenNeato, open the robot, and copy
+#    the value after `/config/integrations/integration/` in the browser URL.
+# 3. For a second robot, duplicate the view and use its entity/config-entry IDs.
+
+title: OpenNeato
+views:
+  - title: Vacuums
+    path: vacuums
+    icon: mdi:robot-vacuum
+    type: sections
+    max_columns: 3
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Robot
+            icon: mdi:robot-vacuum
+          - type: tile
+            entity: vacuum.openneato_my_neato
+            name: My Neato
+            features:
+              - type: vacuum-commands
+                commands:
+                  - start_pause
+                  - stop
+                  - clean_spot
+                  - locate
+                  - return_home
+              - type: vacuum-fan-speed
+            features_position: bottom
+          - type: tile
+            entity: sensor.openneato_my_neato_battery_level
+            name: Battery
+          - type: tile
+            entity: binary_sensor.openneato_my_neato_charging
+            name: Charging
+          - type: tile
+            entity: sensor.openneato_my_neato_last_clean_ended
+            name: Last clean
+          - type: tile
+            entity: sensor.openneato_my_neato_last_clean_area
+            name: Last area
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Cleaning setup
+            icon: mdi:tune-variant
+          - type: tile
+            entity: select.openneato_my_neato_navigation_mode
+            name: Navigation
+          - type: tile
+            entity: number.openneato_my_neato_spot_clean_width
+            name: Spot width
+          - type: tile
+            entity: number.openneato_my_neato_spot_clean_height
+            name: Spot height
+          - type: tile
+            entity: switch.openneato_my_neato_eco_mode
+            name: Eco mode
+          - type: tile
+            entity: switch.openneato_my_neato_intense_clean
+            name: Intense clean
+          - type: tile
+            entity: switch.openneato_my_neato_schedule
+            name: Schedule
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: No-go guard and recovery
+            icon: mdi:shield-home
+          - type: tile
+            entity: binary_sensor.openneato_my_neato_no_go_observer_armed
+            name: Guard armed
+          - type: tile
+            entity: sensor.openneato_my_neato_no_go_guard_stage
+            name: Guard stage
+          - type: tile
+            entity: sensor.openneato_my_neato_no_go_last_result
+            name: Last guard result
+          - type: tile
+            entity: binary_sensor.openneato_my_neato_error
+            name: Robot error
+          - type: tile
+            entity: button.openneato_my_neato_clear_errors
+            name: Clear errors
+          - type: tile
+            entity: button.openneato_my_neato_restart_robot
+            name: Restart robot
+            tap_action:
+              action: more-info
+
+      - type: grid
+        column_span: 3
+        cards:
+          - type: heading
+            heading: Map, replay, and no-go editor
+            icon: mdi:map-marker-path
+          - type: custom:openneato-replay-card
+            title: My Neato map
+            entry_id: REPLACE_WITH_CONFIG_ENTRY_ID
+            session: latest
+            height: 620
+            fit: stable
+            rotation: auto
+            autoplay: false
+            floorplan: true
+            grid: true
+            trail: true
+            show_picker: true
+            show_stats: true
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Bridge diagnostics
+            icon: mdi:lan-connect
+          - type: tile
+            entity: sensor.openneato_my_neato_wifi_signal
+            name: Wi-Fi signal
+          - type: tile
+            entity: sensor.openneato_my_neato_storage_used
+            name: Storage used
+          - type: tile
+            entity: sensor.openneato_my_neato_uptime
+            name: Bridge uptime
+          - type: tile
+            entity: button.openneato_my_neato_restart_device
+            name: Restart bridge
+            tap_action:
+              action: more-info

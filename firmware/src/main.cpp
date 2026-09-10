@@ -82,6 +82,10 @@ void setup() {
 
     // Wire navigation mode getter so clean() sends SetNavigationMode before house cleans
     neatoSerial.setNavModeGetter([&] { return settingsManager.get().navMode; });
+    neatoSerial.setSpotDimensionsGetter([&] {
+        const Settings& settings = settingsManager.get();
+        return std::make_pair(settings.spotWidth, settings.spotHeight);
+    });
 
     // Wire WiFi events to data logger BEFORE WiFi connects so boot events are captured.
     // DataLogger buffers entries in memory - they get flushed once SPIFFS mounts in begin().

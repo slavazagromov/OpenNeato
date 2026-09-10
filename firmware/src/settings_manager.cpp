@@ -60,6 +60,8 @@ void SettingsManager::load() {
     current.uartTxPin = prefs.getInt(NVS_KEY_UART_TX_PIN, NEATO_DEFAULT_TX_PIN);
     current.uartRxPin = prefs.getInt(NVS_KEY_UART_RX_PIN, NEATO_DEFAULT_RX_PIN);
     current.navMode = prefs.getString(NVS_KEY_NAV_MODE, "Normal");
+    current.spotWidth = prefs.getInt(NVS_KEY_SPOT_WIDTH, 200);
+    current.spotHeight = prefs.getInt(NVS_KEY_SPOT_HEIGHT, 200);
     current.stallThreshold = prefs.getInt(NVS_KEY_MC_STALL_THR, MANUAL_STALL_LOAD_PCT);
     current.brushRpm = prefs.getInt(NVS_KEY_MC_BRUSH_RPM, MANUAL_BRUSH_RPM);
     current.vacuumSpeed = prefs.getInt(NVS_KEY_MC_VACUUM_PCT, MANUAL_VACUUM_SPEED_PCT);
@@ -98,6 +100,8 @@ void SettingsManager::save() {
     prefs.putInt(NVS_KEY_UART_TX_PIN, current.uartTxPin);
     prefs.putInt(NVS_KEY_UART_RX_PIN, current.uartRxPin);
     prefs.putString(NVS_KEY_NAV_MODE, current.navMode);
+    prefs.putInt(NVS_KEY_SPOT_WIDTH, current.spotWidth);
+    prefs.putInt(NVS_KEY_SPOT_HEIGHT, current.spotHeight);
     prefs.putInt(NVS_KEY_MC_STALL_THR, current.stallThreshold);
     prefs.putInt(NVS_KEY_MC_BRUSH_RPM, current.brushRpm);
     prefs.putInt(NVS_KEY_MC_VACUUM_PCT, current.vacuumSpeed);
@@ -268,6 +272,17 @@ ApplyResult SettingsManager::apply(const String& json) {
         // Silently ignore invalid values (keep current)
     }
 
+    if (incoming.spotWidth != current.spotWidth) {
+        current.spotWidth = constrain(incoming.spotWidth, 100, 400);
+        changed = true;
+        LOG("SETTINGS", "Spot width -> %d cm", current.spotWidth);
+    }
+    if (incoming.spotHeight != current.spotHeight) {
+        current.spotHeight = constrain(incoming.spotHeight, 100, 400);
+        changed = true;
+        LOG("SETTINGS", "Spot height -> %d cm", current.spotHeight);
+    }
+
     // Manual clean motor settings — clamp to safe hardware ranges
     if (incoming.stallThreshold != current.stallThreshold) {
         current.stallThreshold = constrain(incoming.stallThreshold, 30, 80);
@@ -422,6 +437,8 @@ std::vector<Field> Settings::toFields() const {
             {"uartRxPin", String(uartRxPin), FIELD_INT},
             {"maxGpioPin", String(MAX_GPIO_PIN), FIELD_INT},
             {"navMode", navMode, FIELD_STRING},
+            {"spotWidth", String(spotWidth), FIELD_INT},
+            {"spotHeight", String(spotHeight), FIELD_INT},
             {"stallThreshold", String(stallThreshold), FIELD_INT},
             {"brushRpm", String(brushRpm), FIELD_INT},
             {"vacuumSpeed", String(vacuumSpeed), FIELD_INT},
@@ -489,6 +506,14 @@ bool Settings::fromFields(const std::vector<Field>& fields) {
     }
     if ((f = findField(fields, "navMode")) && f->type == FIELD_STRING) {
         navMode = f->value;
+        applied = true;
+    }
+    if ((f = findField(fields, "spotWidth")) && f->type == FIELD_INT) {
+        spotWidth = f->value.toInt();
+        applied = true;
+    }
+    if ((f = findField(fields, "spotHeight")) && f->type == FIELD_INT) {
+        spotHeight = f->value.toInt();
         applied = true;
     }
     if ((f = findField(fields, "stallThreshold")) && f->type == FIELD_INT) {

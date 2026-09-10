@@ -164,6 +164,8 @@ enum CommandStatus {
 #define NVS_KEY_UART_RX_PIN "uart_rx_pin"
 // NVS keys — Cleaning
 #define NVS_KEY_NAV_MODE "nav_mode" // Navigation mode: "Normal", "Gentle", "Deep", "Quick"
+#define NVS_KEY_SPOT_WIDTH "spot_w_cm"
+#define NVS_KEY_SPOT_HEIGHT "spot_h_cm"
 // NVS keys — Manual clean
 #define NVS_KEY_MC_STALL_THR "mc_stall_thr"
 #define NVS_KEY_MC_BRUSH_RPM "mc_brush_rpm"

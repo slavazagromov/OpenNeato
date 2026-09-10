@@ -56,6 +56,8 @@ export const NAV_MODE_PRESETS: NavModePreset[] = [
     { label: "Quick", value: "Quick" },
 ];
 
+export const SPOT_DIMENSION_PRESETS = [100, 150, 200, 250, 300, 350, 400];
+
 // Stall detection presets - wheel load % threshold
 export interface StallPreset {
     label: string;
@@ -124,6 +126,8 @@ export const DEFAULT_SERVER = {
     maxGpioPin: 21,
     hostname: "neato",
     navMode: "Normal",
+    spotWidth: 200,
+    spotHeight: 200,
     stallThreshold: 60,
     brushRpm: 1200,
     vacuumSpeed: 80,

@@ -19,6 +19,8 @@ export function useSettingsForm(errorStack: ErrorStackHandle, startRebootFlow: (
     const [maxGpioPin, setMaxGpioPin] = useState(21);
     const [hostname, setHostname] = useState("neato");
     const [navMode, setNavMode] = useState("Normal");
+    const [spotWidth, setSpotWidth] = useState(200);
+    const [spotHeight, setSpotHeight] = useState(200);
     const [stallThreshold, setStallThreshold] = useState(60);
     const [brushRpm, setBrushRpm] = useState(1200);
     const [vacuumSpeed, setVacuumSpeed] = useState(80);
@@ -61,6 +63,8 @@ export function useSettingsForm(errorStack: ErrorStackHandle, startRebootFlow: (
             setMaxGpioPin(fetched.maxGpioPin);
             setHostname(fetched.hostname);
             setNavMode(fetched.navMode ?? "Normal");
+            setSpotWidth(fetched.spotWidth ?? 200);
+            setSpotHeight(fetched.spotHeight ?? 200);
             setStallThreshold(fetched.stallThreshold);
             setBrushRpm(fetched.brushRpm);
             setVacuumSpeed(fetched.vacuumSpeed);
@@ -97,6 +101,8 @@ export function useSettingsForm(errorStack: ErrorStackHandle, startRebootFlow: (
             uartRxPin !== server.current.uartRxPin ||
             hostname !== server.current.hostname ||
             navMode !== (server.current.navMode ?? "Normal") ||
+            spotWidth !== (server.current.spotWidth ?? 200) ||
+            spotHeight !== (server.current.spotHeight ?? 200) ||
             stallThreshold !== server.current.stallThreshold ||
             brushRpm !== server.current.brushRpm ||
             vacuumSpeed !== server.current.vacuumSpeed ||
@@ -164,6 +170,8 @@ export function useSettingsForm(errorStack: ErrorStackHandle, startRebootFlow: (
         if (uartRxPin !== server.current.uartRxPin) patch.uartRxPin = uartRxPin;
         if (hostname !== server.current.hostname) patch.hostname = hostname;
         if (navMode !== (server.current.navMode ?? "Normal")) patch.navMode = navMode;
+        if (spotWidth !== (server.current.spotWidth ?? 200)) patch.spotWidth = spotWidth;
+        if (spotHeight !== (server.current.spotHeight ?? 200)) patch.spotHeight = spotHeight;
         if (stallThreshold !== server.current.stallThreshold) patch.stallThreshold = stallThreshold;
         if (brushRpm !== server.current.brushRpm) patch.brushRpm = brushRpm;
         if (vacuumSpeed !== server.current.vacuumSpeed) patch.vacuumSpeed = vacuumSpeed;
@@ -203,6 +211,8 @@ export function useSettingsForm(errorStack: ErrorStackHandle, startRebootFlow: (
         uartRxPin,
         hostname,
         navMode,
+        spotWidth,
+        spotHeight,
         stallThreshold,
         brushRpm,
         vacuumSpeed,
@@ -277,6 +287,10 @@ export function useSettingsForm(errorStack: ErrorStackHandle, startRebootFlow: (
         setHostname,
         navMode,
         setNavMode,
+        spotWidth,
+        setSpotWidth,
+        spotHeight,
+        setSpotHeight,
         stallThreshold,
         setStallThreshold,
         brushRpm,
