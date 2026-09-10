@@ -16,9 +16,10 @@ This repository combines two OpenNeato code lines into one project:
    HACS integration under [`custom_components/openneato/`](custom_components/openneato/).
 
 The combined project adds an active no-go guard, Home Assistant map editor, robot-side enforcement, status
-telemetry, and a stationary hardware test panel. The custom no-go implementation and integration glue were
-read, reviewed, and rewritten by **OpenAI Codex**, working with the repository owner. This statement applies
-to this fork's custom work; the original upstream projects retain their own authorship and licenses.
+telemetry, and a stationary hardware test panel. This custom system was **engineered and implemented by
+OpenAI Codex**, with concept guidance, physical fabrication, real-robot testing, and project ownership by
+**Stanislav “Stan” Zagromov ([@slavazagromov](https://github.com/slavazagromov))**. This credit applies to this
+fork's custom work; the original upstream projects retain their own authorship and licenses.
 
 > [!WARNING]
 > **First on-robot enforcement test passed on September 10, 2026.** Firmware
