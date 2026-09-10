@@ -82,6 +82,29 @@ POST /api/nogo/bumper-test?channel=right_whisker
 The test is rejected while an autonomous cleaning run is active. An independent
 1.5-second timer releases the output even if the robot UART sensor read fails.
 
+### Verified hardware result — September 10, 2026
+
+The original ESP32 WROOM32 installation on a Botvac D5 passed all four stationary
+tests independently:
+
+| Channel | Requested mask | Detected mask | Matching bit | Result |
+| --- | ---: | ---: | --- | --- |
+| `left_whisker` / GPIO25 | 1 | 1 | `lSideBit` | PASS |
+| `left_front` / GPIO26 | 2 | 2 | `lFrontBit` | PASS |
+| `right_front` / GPIO27 | 4 | 4 | `rFrontBit` | PASS |
+| `right_whisker` / GPIO14 | 8 | 8 | `rSideBit` | PASS |
+
+Each endpoint returned HTTP 200, `ok: true`, and `detected: true`, with no
+unrequested bumper bit asserted. The final sensor read showed all four bits false;
+`/api/nogo/status` showed `activeBumperMask: 0` and
+`bumperPulseActive: false`. This verifies GPIO, resistor, PhotoMOS, Neato switch
+wiring, and robot sensor recognition for every channel.
+
+The first moving square test also completed four fallback escape cycles with zero
+failed steps. Its status showed `physicalAttemptCount: 5`,
+`physicalSuccessCount: 0`, and `fallbackCount: 5`, so native cleaner avoidance
+from the injected pulse remains a separate open validation item.
+
 ## Configuration
 
 Store a configuration with `PUT /api/nogo/config`:
