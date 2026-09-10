@@ -21,10 +21,27 @@ read, reviewed, and rewritten by **OpenAI Codex**, working with the repository o
 to this fork's custom work; the original upstream projects retain their own authorship and licenses.
 
 > [!WARNING]
-> **Hardware validation is pending.** Firmware `1.24.0-nogo.6-physical-test1` builds successfully, but the
-> four-channel PhotoMOS wiring and moving no-go response have not yet completed on-robot validation. Treat
-> this branch as experimental. Never use a software no-go line as the only protection at stairs or another
-> fall hazard.
+> **First on-robot enforcement test passed on September 10, 2026.** Firmware
+> `1.24.0-nogo.6-physical-test1` saved and armed a 1.2 m test square through the Home Assistant map API on a
+> Botvac D5, detected the boundary, and completed four escape cycles with zero failed steps. The robot then
+> returned to the dock with the guard disarmed and no remaining error. Telemetry showed the TestMode
+> reverse/turn fallback was used, so a native Neato turn caused solely by the PhotoMOS bumper pulse is **not
+> yet confirmed**. This branch remains experimental. Never use a software no-go line as the only protection
+> at stairs or another fall hazard.
+
+### First moving field test
+
+The September 10, 2026 test exercised the complete deployed path: the SkyDash/OpenNeato Home Assistant
+integration wrote a closed square with `openneato/nogo_set`; the ESP32 validated and persisted the geometry;
+the guard armed when cleaning began; and the HA entities reported `near_no_go_line: on`, four completed
+escapes, zero failed steps, and an eventual clean `docked` state. A deliberately tight square around the dock
+briefly produced Neato error 282 (`Failed to undock from base`), which cleared after the run was stopped and
+the guard was disarmed.
+
+This is a **pass for software no-go detection and enforced avoidance through the safety fallback**, not yet a
+pass for native bumper-only avoidance. The stationary diagnostics have confirmed at least the right outer
+whisker path (`GPIO14` → PhotoMOS → `rSideBit`). All four stationary channels and a wider, supervised moving
+test still need to be recorded before calling the physical-bumper-first path production-ready.
 
 ## Four-channel physical bumper interface
 
