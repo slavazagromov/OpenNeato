@@ -39,29 +39,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Validate HA-only change
         run: |
           # Find the most recent ancestor tag matching v* and diff the tree
-          # against it — fail loudly if anything outside custom_components/
-          # moved, so nobody accidentally ships firmware changes without the
-          # firmware build.
+          # against it. Only custom_components/ changes may ship through this
+          # lightweight path. Two workflow-only paths are intentionally
+          # ignored: the deleted one-shot nogo.6 publisher and this reusable
+          # HA release workflow itself.
           LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
           if [ -z "$LAST_TAG" ]; then
             echo "No prior v* tag found; skipping scope check."
             exit 0
           fi
-          CHANGED=$(git diff --name-only "$LAST_TAG"..HEAD | grep -v '^custom_components/' || true)
+
+          CHANGED=$(git diff --name-only "$LAST_TAG"..HEAD \
+            | grep -v '^custom_components/' \
+            | grep -v '^\.github/workflows/publish-ha-nogo6-once\.yml$' \
+            | grep -v '^\.github/workflows/release-ha\.yml$' \
+            || true)
+
           if [ -n "$CHANGED" ]; then
             echo "::error::Files outside custom_components/ have changed since $LAST_TAG:"
             echo "$CHANGED"
             echo "Use the full 'Build and Release' workflow instead."
             exit 1
           fi
-          echo "Scope OK — only custom_components/ changed since $LAST_TAG."
+          echo "Scope OK — only HA integration changes (plus release-workflow maintenance) changed since $LAST_TAG."
 
       - name: Create and push release tag
         run: |
