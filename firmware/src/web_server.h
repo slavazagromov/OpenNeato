@@ -81,7 +81,7 @@ private:
 
 // -- Template helpers --------------------------------------------------------
 
-namespace detail {
+namespace web_server_detail {
 
     // Hand-rolled index sequence (GCC 8.4 / Arduino may not expose std::index_sequence).
     template<size_t... I>
@@ -234,7 +234,7 @@ namespace detail {
         using Names = std::array<const char *, NArgs>;
     };
 
-} // namespace detail
+} // namespace web_server_detail
 
 // -- Template implementation (must be in header) -----------------------------
 
@@ -243,12 +243,12 @@ namespace detail {
 template<typename Mgr, typename Method>
 void WebServer::registerGetRoute(const char *path, Mgr& mgr, Method method,
                                  std::initializer_list<const char *> paramNames) {
-    using Traits = detail::GetMethodTraits<Method>;
+    using Traits = web_server_detail::GetMethodTraits<Method>;
     using T = typename Traits::DataType;
     using Cb = typename Traits::Cb;
     using UserArgsTuple = typename Traits::UserArgsTuple;
     static constexpr size_t NArgs = Traits::NArgs;
-    auto names = detail::toArray<NArgs>(paramNames);
+    auto names = web_server_detail::toArray<NArgs>(paramNames);
     server.on(path, HTTP_GET, [this, path, &mgr, method, names](AsyncWebServerRequest *request) {
         lastApiActivity = millis();
         unsigned long startMs = lastApiActivity;
@@ -265,8 +265,8 @@ void WebServer::registerGetRoute(const char *path, Mgr& mgr, Method method,
                 req->send(200, "application/json", data.toJson());
             }
         };
-        detail::DispatchGet<Mgr, Method, T, UserArgsTuple, NArgs>::invoke(mgr, method, request, names, cb,
-                                                                          detail::MakeIndexSequence<NArgs>{});
+        web_server_detail::DispatchGet<Mgr, Method, T, UserArgsTuple, NArgs>::invoke(
+                mgr, method, request, names, cb, web_server_detail::MakeIndexSequence<NArgs>{});
     });
 }
 
@@ -275,10 +275,10 @@ void WebServer::registerGetRoute(const char *path, Mgr& mgr, Method method,
 template<typename Mgr, typename Method>
 void WebServer::registerPostRoute(const char *path, Mgr& mgr, Method method,
                                   std::initializer_list<const char *> paramNames) {
-    using Traits = detail::PostMethodTraits<Method>;
+    using Traits = web_server_detail::PostMethodTraits<Method>;
     using UserArgsTuple = typename Traits::UserArgsTuple;
     static constexpr size_t NArgs = Traits::NArgs;
-    auto names = detail::toArray<NArgs>(paramNames);
+    auto names = web_server_detail::toArray<NArgs>(paramNames);
     server.on(path, HTTP_POST, [this, path, &mgr, method, names](AsyncWebServerRequest *request) {
         lastApiActivity = millis();
         unsigned long startMs = lastApiActivity;
@@ -295,8 +295,8 @@ void WebServer::registerPostRoute(const char *path, Mgr& mgr, Method method,
                 sendOk(req.get());
             }
         };
-        if (!detail::DispatchPost<Mgr, Method, UserArgsTuple, NArgs>::invoke(mgr, method, request, names, cb,
-                                                                             detail::MakeIndexSequence<NArgs>{})) {
+        if (!web_server_detail::DispatchPost<Mgr, Method, UserArgsTuple, NArgs>::invoke(
+                    mgr, method, request, names, cb, web_server_detail::MakeIndexSequence<NArgs>{})) {
             logger.logRequest(HTTP_POST, path, 503, 0);
             sendError(request, 503, "unavailable");
         }
