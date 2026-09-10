@@ -39,9 +39,20 @@ briefly produced Neato error 282 (`Failed to undock from base`), which cleared a
 the guard was disarmed.
 
 This is a **pass for software no-go detection and enforced avoidance through the safety fallback**, not yet a
-pass for native bumper-only avoidance. The stationary diagnostics have confirmed at least the right outer
-whisker path (`GPIO14` → PhotoMOS → `rSideBit`). All four stationary channels and a wider, supervised moving
-test still need to be recorded before calling the physical-bumper-first path production-ready.
+pass for native bumper-only avoidance. On September 10, 2026, the firmware's stationary diagnostic also
+verified all four independent electrical paths end-to-end:
+
+| Diagnostic channel | Requested mask | Only asserted robot bit | Result |
+| --- | ---: | --- | --- |
+| Left outer whisker / GPIO25 | 1 | `lSideBit` | PASS |
+| Left inner/front / GPIO26 | 2 | `lFrontBit` | PASS |
+| Right inner/front / GPIO27 | 4 | `rFrontBit` | PASS |
+| Right outer whisker / GPIO14 | 8 | `rSideBit` | PASS |
+
+Every request returned HTTP 200 with `detected: true`. The post-test status reported
+`activeBumperMask: 0`, `bumperPulseActive: false`, and all four physical sensor bits false, confirming that
+every output released. A wider, supervised moving test is still required to determine why the first moving
+encounter used the fallback instead of recording a native bumper-only escape.
 
 ## Four-channel physical bumper interface
 
