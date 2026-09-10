@@ -16,8 +16,15 @@ namespace {
     constexpr unsigned long TURN_MS = 1900;
     constexpr unsigned long COOLDOWN_MIN_MS = 3000;
     constexpr unsigned long COOLDOWN_MAX_MS = 30000;
-    constexpr unsigned long PHYSICAL_BUMPER_PULSE_MS = 300;
-    constexpr unsigned long PHYSICAL_BUMPER_OBSERVE_MS = 750;
+    // Hold the PhotoMOS contacts long enough for the Neato control loop to
+    // recognize them as a real bumper press while it is driving.  The first
+    // moving-robot trial showed that 300 ms was electrically valid but too
+    // short for the robot to begin its native avoidance maneuver.
+    constexpr unsigned long PHYSICAL_BUMPER_PULSE_MS = 750;
+    // Observation begins with the pulse and must outlive it by several pose
+    // polls.  If native avoidance is still not visible, the guarded software
+    // reverse/turn path remains the deterministic fallback.
+    constexpr unsigned long PHYSICAL_BUMPER_OBSERVE_MS = 2000;
     constexpr unsigned long BUMPER_TEST_TIMEOUT_MS = 1500;
     constexpr float REARM_MARGIN_M = 0.15f;
     constexpr float LOOKAHEAD_DISTANCE_M = 0.45f;
