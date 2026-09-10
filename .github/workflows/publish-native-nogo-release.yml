@@ -36,27 +36,9 @@ jobs:
       - name: Create simple primary download name
         run: cp "$FACTORY_FILE" "$PRIMARY_FILE"
 
-      - name: Create or update tracked prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Write release notes
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" \
-              "$PRIMARY_FILE" \
-              "$FACTORY_FILE" \
-              "$OTA_FILE" \
-              "$CHECKSUM_FILE" \
-              --clobber
-          else
-            gh release create "$RELEASE_TAG" \
-              "$PRIMARY_FILE" \
-              "$FACTORY_FILE" \
-              "$OTA_FILE" \
-              "$CHECKSUM_FILE" \
-              --target "$GITHUB_SHA" \
-              --title "OpenNeato native no-go field-test build" \
-              --prerelease \
-              --notes-file - <<'EOF'
+          cat > release-notes.md <<'EOF'
           Experimental original-ESP32/WROOM32 build for the four-channel PhotoMOS no-go guard.
 
           ## Main download
@@ -69,3 +51,27 @@ jobs:
 
           The OTA payload identifies itself as `1.24.0-nogo.7-native-timing1`. Verify downloads with `checksums.txt`. This remains experimental motion-control firmware; never use a software no-go line as the only protection at stairs or another fall hazard.
           EOF
+
+      - name: Create or update tracked prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "$PRIMARY_FILE" \
+              "$FACTORY_FILE" \
+              "$OTA_FILE" \
+              "$CHECKSUM_FILE" \
+              --clobber
+            gh release edit "$RELEASE_TAG" --notes-file release-notes.md
+          else
+            gh release create "$RELEASE_TAG" \
+              "$PRIMARY_FILE" \
+              "$FACTORY_FILE" \
+              "$OTA_FILE" \
+              "$CHECKSUM_FILE" \
+              --target "$GITHUB_SHA" \
+              --title "OpenNeato native no-go field-test build" \
+              --prerelease \
+              --notes-file release-notes.md
+          fi
