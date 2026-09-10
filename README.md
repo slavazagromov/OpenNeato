@@ -18,7 +18,7 @@ This repository combines two OpenNeato code lines into one project:
 The combined project adds an active no-go guard, Home Assistant map editor, robot-side enforcement, status
 telemetry, and a stationary hardware test panel. This custom system was **engineered and implemented by
 OpenAI Codex**, with concept guidance, physical fabrication, real-robot testing, and project ownership by
-**Stanislav “Stan” Zagromov ([@slavazagromov](https://github.com/slavazagromov))**. This credit applies to this
+the **repository owner**. This credit applies to this
 fork's custom work; the original upstream projects retain their own authorship and licenses.
 
 > [!WARNING]
