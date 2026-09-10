@@ -28,6 +28,23 @@ fork's custom work; the original upstream projects retain their own authorship a
 > and zero failed steps. This remains experimental motion-control firmware: never use a software line as
 > the only protection at stairs or another fall hazard.
 
+## Tested firmware binary
+
+The exact original-ESP32/WROOM32 binary that passed the real Botvac D5 native no-go test is committed at
+[`firmware/releases/OpenNeato-ESP32-nogo-native-timing1.bin`](firmware/releases/OpenNeato-ESP32-nogo-native-timing1.bin).
+It identifies itself as `1.24.0-nogo.7-native-timing1` and uses the validated 750 ms PhotoMOS contact plus
+2-second native-response observation window.
+
+SHA-256:
+
+```text
+989b28d4ce986314ea0ef72e1c64c645a45d7546e367b48732e56dda2b128e04
+```
+
+This file is for the original ESP32/WROOM32 target used in the documented four-channel build. Do not flash it
+to an ESP32-C3, C6, or S3. Existing compatible OpenNeato installations can install it through the web UI's
+firmware-update page. Source builds remain available for every supported target.
+
 ### Verified moving field tests
 
 The complete deployed path is now proven: the SkyDash/OpenNeato Home Assistant integration writes saved
