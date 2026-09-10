@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -32,6 +33,8 @@ _LOGGER = logging.getLogger(__name__)
 # fall out of version sync.
 REPLAY_CARD_FILENAME = "openneato-replay-card.js"
 REPLAY_CARD_URL = f"/openneato_static/{REPLAY_CARD_FILENAME}"
+NOGO_SHAPES_FILENAME = "openneato-nogo-shapes.js"
+NOGO_SHAPES_URL = f"/openneato_static/{NOGO_SHAPES_FILENAME}"
 _FRONTEND_REGISTERED = "frontend_registered"
 
 PLATFORMS: list[Platform] = [
@@ -127,8 +130,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Serve the replay card and register the API it calls.
 
-    Runs once per HA start, not once per config entry — the static path, the
-    WebSocket commands and the frontend script tag are all global.
+    Runs once per HA start, not once per config entry — the static paths, the
+    WebSocket commands and the frontend helper script are all global.
     """
     if hass.data[DOMAIN].get(_FRONTEND_REGISTERED):
         return
@@ -137,18 +140,29 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     websocket.async_register(hass)
     hass.http.register_view(OpenNeatoMapView())
 
-    card_path = Path(__file__).parent / "www" / REPLAY_CARD_FILENAME
+    www_path = Path(__file__).parent / "www"
+    card_path = www_path / REPLAY_CARD_FILENAME
+    shapes_path = www_path / NOGO_SHAPES_FILENAME
     if not await hass.async_add_executor_job(card_path.is_file):
         _LOGGER.warning("Replay card asset missing at %s; card will not load", card_path)
         return
+    if not await hass.async_add_executor_job(shapes_path.is_file):
+        _LOGGER.warning(
+            "No-go shape helper missing at %s; line editor will still work",
+            shapes_path,
+        )
 
     # Serving the card is a convenience, not a prerequisite for the robot to
     # work — never let a frontend API change take the vacuum down with it.
     try:
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig(REPLAY_CARD_URL, str(card_path), True)]
-        )
-        # Deliberately no add_extra_js_url here.
+        static_paths = [StaticPathConfig(REPLAY_CARD_URL, str(card_path), True)]
+        if await hass.async_add_executor_job(shapes_path.is_file):
+            static_paths.append(
+                StaticPathConfig(NOGO_SHAPES_URL, str(shapes_path), True)
+            )
+        await hass.http.async_register_static_paths(static_paths)
+
+        # Deliberately no add_extra_js_url for the replay card itself.
         #
         # The card also has to be declared as a Lovelace resource, because
         # add_extra_js_url alone loses the race against the dashboard's first
@@ -158,21 +172,25 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         # and the card renders as "Custom element doesn't exist" -- about one
         # reload in three, and more often when reloading quickly.
         #
-        # One loader, and the reliable one: the Lovelace resource is awaited
-        # before the view builds, which is why every HACS card uses it. The
-        # resource URL carries ?v=<manifest version>, so bump the manifest when
-        # the card changes or browsers will serve a stale copy.
+        # The shape helper is different: it waits on
+        # customElements.whenDefined("openneato-replay-card"), so it is safe to
+        # load globally before or after the Lovelace resource and cannot race
+        # the card registration.
         integration = await async_get_integration(hass, DOMAIN)
+        version = integration.version or "0"
+        if await hass.async_add_executor_job(shapes_path.is_file):
+            add_extra_js_url(hass, f"{NOGO_SHAPES_URL}?v={version}")
         _LOGGER.debug(
-            "Replay card %s served at %s; register it as a Lovelace resource "
-            "with the matching ?v= query",
-            integration.version or "0",
+            "Replay card %s served at %s; no-go shape helper at %s; register "
+            "the card as a Lovelace resource with the matching ?v= query",
+            version,
             REPLAY_CARD_URL,
+            NOGO_SHAPES_URL,
         )
     except Exception:  # noqa: BLE001
         _LOGGER.exception(
-            "Could not auto-register the replay card. Add %s as a Lovelace "
-            "resource manually if the card does not appear",
+            "Could not auto-register the replay card helpers. Add %s as a "
+            "Lovelace resource manually if the card does not appear",
             REPLAY_CARD_URL,
         )
         return
@@ -185,7 +203,7 @@ async def async_reload_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload an OpenNeato config entry."""
+    """Unload OpenNeato config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         stored = hass.data[DOMAIN].pop(entry.entry_id)
         if stored.get("mapper"):
