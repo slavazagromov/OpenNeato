@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.24.0-nogo.12
+
+### Fixed
+
+* OpenNeato startup now treats the robot and firmware version endpoints as
+  optional metadata. Saved values are used when those endpoints time out or
+  return malformed ESP32 HTTP responses, while the coordinator's state,
+  charger, and system endpoints remain the actual health gate.
+* The accumulated LIDAR map now persists its display origin, extent, scale,
+  and view rotation. Existing maps migrate automatically, and later cleaning
+  sessions can improve wall evidence without resizing, recentering, or
+  rotating saved no-go geometry.
+
 ## 1.24.0-nogo.5
 
 ### Fixed
