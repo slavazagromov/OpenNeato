@@ -96,6 +96,21 @@ class LidarMapRunner:
         """Restore the accumulated map from storage."""
         data = await self._store.async_load()
         self._map = AccumulatedMap(data)
+        # Migrate existing accumulated maps to a stable display frame exactly
+        # once. From then on, later cleanings can improve the wall evidence
+        # without changing the map's visible origin, extent, scale or rotation.
+        migrated = False
+        if self._map.walls and self._map.render_frame is None:
+            self._map.render_frame = plan_calibration(
+                self._map.walls, self._map.floor
+            )
+            migrated = self._map.render_frame is not None
+        if self._map.walls and self._map.view_angle_lock is None:
+            self._map.view_rotation(0.0)
+            migrated = True
+        if migrated:
+            await self._store.async_save(self._map.as_dict())
+
         if self._map.sessions:
             _LOGGER.info(
                 "LIDAR map restored: %d wall cells from %d cleanings",
@@ -297,6 +312,16 @@ class LidarMapRunner:
         if report.get("rejected"):
             return
 
+        # The first good accumulated map establishes the permanent display
+        # frame. Do not recalculate this after later sessions; keeping it fixed
+        # is what prevents no-go lines from appearing to move or resize.
+        if self._map.render_frame is None:
+            self._map.render_frame = plan_calibration(
+                self._map.walls, self._map.floor
+            )
+        if self._map.view_angle_lock is None:
+            self._map.view_rotation(0.0)
+
         await self._store.async_save(self._map.as_dict())
         _LOGGER.info(
             "LIDAR map updated: %d wall cells after %d cleanings",
@@ -334,14 +359,23 @@ class LidarMapRunner:
         if not self._map or not self._map.walls:
             return None
         return await self.hass.async_add_executor_job(
-            render_plan, self._map.walls, self._map.floor
+            render_plan,
+            self._map.walls,
+            self._map.floor,
+            100,
+            self._map.render_frame,
         )
 
     def calibration(self) -> dict[str, float] | None:
         """Where the plan sits in the world, without rendering it."""
         if not self._map or not self._map.walls:
             return None
-        return plan_calibration(self._map.walls, self._map.floor)
+        return plan_calibration(
+            self._map.walls,
+            self._map.floor,
+            100,
+            self._map.render_frame,
+        )
 
     def alignment(self, session_name: str) -> tuple[int, int, int] | None:
         """How this session was corrected onto the map, if it was merged.
