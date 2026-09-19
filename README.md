@@ -278,6 +278,14 @@ A single device with the following entity groups:
 Every entity is translated via `strings.json`, and diagnostic-class entities (voltages, currents, raw
 sensor states) are tagged so they cluster cleanly under HA's Diagnostic section.
 
+### Home Assistant reliability update (2026-09-19)
+
+The integration now tolerates failures from the optional robot/firmware version
+metadata endpoints and uses the coordinator's critical state endpoints as the
+startup health gate. Its accumulated LIDAR floorplan also persists a fixed
+origin, extent, scale, and view rotation so later cleaning sessions do not move
+or resize saved no-go lines. Existing stored maps migrate automatically.
+
 ### Notes for setup
 
 - **The map card needs no installation** — the integration serves
