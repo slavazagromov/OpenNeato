@@ -10,12 +10,11 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_integration
 
 from . import websocket
-from .api import OpenNeatoApiClient, OpenNeatoConnectionError
+from .api import OpenNeatoApiClient
 from .const import (
     CONF_HOST,
     CONF_MAP_ENABLED,
@@ -67,33 +66,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api = OpenNeatoApiClient(host, session)
 
     _LOGGER.debug("Connecting to OpenNeato at %s", host)
+
+    try:
+        robot_info = await api.get_robot_version()
+    except Exception as err:  # noqa: BLE001 -- metadata must not gate setup
+        _LOGGER.warning(
+            "OpenNeato at %s did not return robot metadata; using saved values: %s",
+            host,
+            err,
+        )
+    else:
+        serial = robot_info.get("serialNumber") or serial
+        model = robot_info.get("modelName") or model
+        sw_version = robot_info.get("softwareVersion") or sw_version
+
     try:
         firmware_info = await api.get_firmware_version()
-        robot_info = await api.get_robot_version()
-    except OpenNeatoConnectionError as err:
-        _LOGGER.warning("Cannot connect to OpenNeato at %s: %s", host, err)
-        raise ConfigEntryNotReady(
-            f"Cannot connect to OpenNeato at {host}: {err}"
-        ) from err
-    except Exception as err:
-        _LOGGER.exception("Unexpected error connecting to OpenNeato at %s", host)
-        raise ConfigEntryNotReady(
-            f"Unexpected error connecting to OpenNeato at {host}: {err}"
-        ) from err
+    except Exception as err:  # noqa: BLE001 -- metadata must not gate setup
+        _LOGGER.warning(
+            "OpenNeato at %s did not return firmware metadata; using saved value: %s",
+            host,
+            err,
+        )
+    else:
+        fw_version = firmware_info.get("version") or fw_version
 
-    _LOGGER.info(
-        "Connected to OpenNeato at %s — %s (%s) firmware %s",
-        host,
-        robot_info.get("modelName"),
-        robot_info.get("serialNumber"),
-        firmware_info.get("version"),
-    )
-
-    serial = robot_info.get("serialNumber", entry.data.get("serial", "unknown"))
-    model = robot_info.get("modelName", entry.data.get("model"))
-    sw_version = robot_info.get("softwareVersion", entry.data.get("software_version"))
-    fw_version = firmware_info.get("version", entry.data.get("firmware_version"))
-
+    # The coordinator is the actual health gate. It polls state, charger and
+    # system concurrently and only fails setup when ALL three critical
+    # endpoints fail. A single flaky endpoint therefore cannot make the vacuum
+    # unavailable.
     coordinator = OpenNeatoCoordinator(hass, api, serial)
     await coordinator.async_config_entry_first_refresh()
 
