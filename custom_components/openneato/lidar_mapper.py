@@ -269,6 +269,7 @@ def render_plan(
     walls: dict[tuple[int, int], int],
     floor: set[tuple[int, int]],
     px_per_m: int = RENDER_PX_PER_M,
+    frame: dict[str, float] | None = None,
 ) -> tuple[bytes, dict[str, float]] | None:
     """Draw the plan in the robot's frame; return (png, calibration).
 
@@ -277,7 +278,7 @@ def render_plan(
     calibration is exact rather than fitted: the image is drawn in world
     coordinates, so its bottom-left corner *is* the origin.
     """
-    cal = plan_calibration(walls, floor, px_per_m)
+    cal = plan_calibration(walls, floor, px_per_m, frame)
     if cal is None:
         return None
     # Hoisted deliberately. wall_threshold() sorts every count, so calling it
@@ -331,6 +332,7 @@ def plan_calibration(
     walls: dict[tuple[int, int], int],
     floor: set[tuple[int, int]],
     px_per_m: int = RENDER_PX_PER_M,
+    frame: dict[str, float] | None = None,
 ) -> dict[str, float] | None:
     """World-to-pixel mapping the rendered plan will use.
 
@@ -342,6 +344,23 @@ def plan_calibration(
     wall_cells = {c for c, n in walls.items() if n >= threshold}
     if not wall_cells:
         return None
+
+    # Once a render frame has been established, keep it forever. The
+    # accumulated map may gain or lose low-confidence edge cells as later
+    # cleanings are merged and the adaptive wall threshold moves, but that
+    # must not resize/recenter the displayed floorplan. No-go geometry is
+    # stored in world metres, so a fixed origin/extent keeps drawn lines
+    # visually anchored to the same physical place.
+    if frame:
+        return {
+            "scale": float(frame["scale"]),
+            "origin_x": float(frame["origin_x"]),
+            "origin_y": float(frame["origin_y"]),
+            "width": int(frame["width"]),
+            "height": int(frame["height"]),
+            "wall_cells": len(wall_cells),
+            "floor_cells": len(floor),
+        }
 
     cells = wall_cells | floor
     min_x = min(c[0] for c in cells) * CELL_M - RENDER_PAD_M
@@ -383,6 +402,15 @@ class AccumulatedMap:
         # Quarter turn that puts the reference map the right way up, kept so
         # the orientation cannot flip between renders.
         self.quarter_lock: int = int(data.get("quarter_lock", 0))
+        # Stable display geometry. These are intentionally persisted instead
+        # of recalculated from every new cleaning so the map never appears to
+        # zoom, shrink, expand or slide underneath saved no-go lines.
+        self.render_frame: dict[str, float] | None = data.get("render_frame")
+        self.view_angle_lock: float | None = (
+            float(data["view_angle_lock"])
+            if data.get("view_angle_lock") is not None
+            else None
+        )
         # Correction applied to each merged session, keyed by its file name.
         #
         # A session arrives in whatever frame the robot's localisation happened
@@ -403,6 +431,8 @@ class AccumulatedMap:
             "floor": [f"{cx},{cy}" for cx, cy in self.floor],
             "sessions": self.sessions,
             "quarter_lock": self.quarter_lock,
+            "render_frame": self.render_frame,
+            "view_angle_lock": self.view_angle_lock,
             "alignments": {k: list(v) for k, v in self.alignments.items()},
         }
 
@@ -481,10 +511,12 @@ class AccumulatedMap:
         path and coverage live in -- so straightening is a property of the
         view, not of the image.
         """
-        threshold = wall_threshold(self.walls)  # hoisted: one sort, not one per cell
-        wall_cells = [c for c, n in self.walls.items() if n >= threshold]
-        skew = manhattan_angle(wall_cells)
-        return round((-skew) + self.quarter_lock * 90 + user_offset, 2) % 360
+        if self.view_angle_lock is None:
+            threshold = wall_threshold(self.walls)  # one sort, not one per cell
+            wall_cells = [c for c, n in self.walls.items() if n >= threshold]
+            skew = manhattan_angle(wall_cells)
+            self.view_angle_lock = round((-skew) + self.quarter_lock * 90, 2) % 360
+        return round(self.view_angle_lock + user_offset, 2) % 360
 
 
 def _key(raw: str) -> tuple[int, int]:
