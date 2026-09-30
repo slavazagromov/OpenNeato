@@ -221,8 +221,8 @@ bool Scheduler::handleScheduledCleaning(const Settings& s, int day, int nowMins)
             }
 
             if (!state.isIdle()) {
-                LOG("SCHED", "Robot busy (%s / %s), skipping slot %s", state.uiState.c_str(),
-                    state.robotState.c_str(), slotStr.c_str());
+                LOG("SCHED", "Robot busy (%s / %s), skipping slot %s", state.uiState.c_str(), state.robotState.c_str(),
+                    slotStr.c_str());
                 dataLogger.logGenericEvent("scheduler_skipped", {{"day", String(day), FIELD_INT},
                                                                  {"slot", slotStr, FIELD_STRING},
                                                                  {"reason", "busy", FIELD_STRING},
