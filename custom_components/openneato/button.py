@@ -28,10 +28,15 @@ _LOGGER = logging.getLogger(__name__)
 class OpenNeatoButtonEntityDescription(ButtonEntityDescription):
     """Describe an OpenNeato button."""
 
-    press_fn: Callable[[OpenNeatoApiClient], Coroutine[Any, Any, Any]]
+    press_fn: Callable[[OpenNeatoApiClient], Coroutine[Any, Any, Any]] | None = None
 
 
 BUTTON_DESCRIPTIONS: tuple[OpenNeatoButtonEntityDescription, ...] = (
+    OpenNeatoButtonEntityDescription(
+        key="check_status",
+        name="Check status",
+        icon="mdi:information-refresh-outline",
+    ),
     OpenNeatoButtonEntityDescription(
         key="restart",
         translation_key="restart",
@@ -122,7 +127,15 @@ class OpenNeatoButton(OpenNeatoEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle the button press."""
-        await self.entity_description.press_fn(self._api)
+        if self.entity_description.key == "check_status":
+            await self.coordinator.async_request_refresh()
+        else:
+            await self.entity_description.press_fn(self._api)
+
+    @property
+    def available(self) -> bool:
+        """Allow a manual check to retry an unreachable robot."""
+        return self.entity_description.key == "check_status" or super().available
 
 
 async def async_setup_entry(
