@@ -37,6 +37,15 @@ class OpenNeatoSwitchEntityDescription(SwitchEntityDescription):
 
 SWITCH_DESCRIPTIONS: tuple[OpenNeatoSwitchEntityDescription, ...] = (
     OpenNeatoSwitchEntityDescription(
+        key="restart_before_clean",
+        name="Restart robot and bridge before cleaning",
+        section="settings",
+        field="restartBeforeClean",
+        settings_field="restartBeforeClean",
+        icon="mdi:restart",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    OpenNeatoSwitchEntityDescription(
         key="eco_mode",
         translation_key="eco_mode",
         name="Eco mode",

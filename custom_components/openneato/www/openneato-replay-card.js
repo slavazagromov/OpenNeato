@@ -11,7 +11,7 @@
  * (openneato/sessions, openneato/session) — the browser only draws.
  */
 
-const CARD_VERSION = "1.2.0-nogo-enforce";
+const CARD_VERSION = "1.2.1-check-status";
 
 // Breathing room around the fitted map, in CSS pixels. Kept small: the fit
 // already leaves slack wherever the run is not the shape of the card, and
@@ -623,6 +623,20 @@ class OpenNeatoReplayCard extends HTMLElement {
                 button:hover { background: var(--secondary-background-color); }
                 button:disabled { opacity: 0.4; cursor: default; }
                 svg { width: 20px; height: 20px; fill: currentColor; }
+                button.check-status {
+                    border-radius: 6px;
+                    padding: 5px 8px;
+                    font: inherit;
+                    font-size: 0.8rem;
+                    line-height: 1.4;
+                    white-space: nowrap;
+                    flex-shrink: 0;
+                }
+                .status-check-note {
+                    padding: 0 16px 8px;
+                    font-size: 0.8rem;
+                    color: var(--secondary-text-color);
+                }
                 button.speed {
                     border-radius: 10px;
                     padding: 3px 8px;
@@ -711,7 +725,9 @@ class OpenNeatoReplayCard extends HTMLElement {
                         <svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                     </button>
                     <div class="stats"></div>
+                    <button class="check-status" title="Fetch current robot status once">Check status</button>
                 </div>
+                <div class="status-check-note" role="status" aria-live="polite" hidden></div>
                 <div class="stage">
                     <canvas></canvas>
                     <div class="overlay">Loading…</div>
@@ -747,6 +763,8 @@ class OpenNeatoReplayCard extends HTMLElement {
         this._picker = root.querySelector(".picker");
         this._statsEl = root.querySelector(".stats");
         this._delBtn = root.querySelector(".del");
+        this._checkStatusBtn = root.querySelector(".check-status");
+        this._statusCheckNote = root.querySelector(".status-check-note");
         this._stage = root.querySelector(".stage");
         this._canvas = root.querySelector("canvas");
         this._overlay = root.querySelector(".overlay");
@@ -789,6 +807,7 @@ class OpenNeatoReplayCard extends HTMLElement {
 
         this._picker.addEventListener("change", () => this._selectSession(this._picker.value));
         this._delBtn.addEventListener("click", () => this._deleteSelected());
+        this._checkStatusBtn.addEventListener("click", () => this._checkStatus());
         this._playBtn.addEventListener("click", () => this._togglePlay());
         this._restartBtn.addEventListener("click", () => this._restart());
         this._speedBtn.addEventListener("click", () => this._cycleSpeed());
@@ -911,6 +930,29 @@ class OpenNeatoReplayCard extends HTMLElement {
     }
 
     /* ---- data loading ---- */
+
+    async _checkStatus() {
+        if (!this._hass || this._checkStatusBtn.disabled) return;
+        this._checkStatusBtn.disabled = true;
+        this._checkStatusBtn.textContent = "Checking…";
+        this._statusCheckNote.hidden = false;
+        this._statusCheckNote.textContent = "Checking robot status…";
+        try {
+            const entryId = this._entryId || this._config.entry_id;
+            const result = await this._hass.callWS({
+                type: "openneato/check_status",
+                ...(entryId ? { entry_id: entryId } : {}),
+            });
+            this._entryId = result.entry_id;
+            this._statusCheckNote.textContent = `Status checked at ${new Date().toLocaleTimeString()}`;
+            await this._loadSessions();
+        } catch (error) {
+            this._statusCheckNote.textContent = error.message || "Could not check robot status";
+        } finally {
+            this._checkStatusBtn.disabled = false;
+            this._checkStatusBtn.textContent = "Check status";
+        }
+    }
 
     async _loadSessions() {
         try {

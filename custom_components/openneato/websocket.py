@@ -48,6 +48,26 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_delete_session)
     websocket_api.async_register_command(hass, ws_get_nogo)
     websocket_api.async_register_command(hass, ws_set_nogo)
+    websocket_api.async_register_command(hass, ws_check_status)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "openneato/check_status", vol.Optional("entry_id"): str}
+)
+@websocket_api.async_response
+async def ws_check_status(hass, connection, msg) -> None:
+    """Refresh this robot once, including when its last check failed."""
+    resolved = _resolve_entry(hass, msg.get("entry_id"))
+    if resolved is None:
+        connection.send_error(msg["id"], "not_found", "Choose an OpenNeato robot")
+        return
+    entry_id, stored = resolved
+    coordinator = stored["coordinator"]
+    await coordinator.async_request_refresh()
+    if not coordinator.last_update_success:
+        connection.send_error(msg["id"], "unavailable", "Robot unreachable; status was not refreshed")
+        return
+    connection.send_result(msg["id"], {"entry_id": entry_id})
 
 
 def _resolve_entry(hass: HomeAssistant, entry_id: str | None) -> tuple[str, dict[str, Any]] | None:

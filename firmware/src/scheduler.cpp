@@ -1,5 +1,79 @@
 #include "scheduler.h"
 #include "data_logger.h"
+#include "preclean_restart.h"
+#include <esp_attr.h>
+
+// Survives the deliberate ESP32 soft restart, without daily flash writes.
+// Store the scheduled epoch, not weekday, so next week's slot is independent.
+static RTC_DATA_ATTR time_t preparedCleanAt = 0;
+
+bool Scheduler::handlePreCleanRestart(const Settings& s, time_t now) {
+    if (!s.scheduleEnabled || !s.restartBeforeClean || pendingCleanAfterRestart || preCleanRestartPending ||
+        system.isRebootPending())
+        return false;
+    // A cold power cycle already restarted the bridge. This also prevents a
+    // reboot loop if restarting the Neato happens to cut power to the ESP32.
+    if (millis() < 120000UL)
+        return false;
+
+    struct tm local;
+    localtime_r(&now, &local);
+    for (int offset = 0; offset <= 1; offset++) {
+        struct tm target = local;
+        target.tm_mday += offset;
+        target.tm_hour = 0;
+        target.tm_min = 0;
+        target.tm_sec = 0;
+        target.tm_isdst = -1;
+        mktime(&target);
+        const int day = toSchedDay(target.tm_wday);
+        for (const SchedSlot& slot: s.sched[day].slots) {
+            if (!slot.on)
+                continue;
+            struct tm scheduled = target;
+            scheduled.tm_hour = slot.hour;
+            scheduled.tm_min = slot.minute;
+            scheduled.tm_isdst = -1;
+            time_t cleanAt = mktime(&scheduled);
+            // One-minute trigger window, ten minutes before the clean.
+            if (!preCleanRestartDue(now, cleanAt, preparedCleanAt, millis()) || isSkipNextCleanRequested())
+                continue;
+            preCleanRestartPending = true;
+            serial.getState([this, cleanAt](bool ok, const RobotState& state) {
+                if (!ok || !isRobotIdle(state)) {
+                    preCleanRestartPending = false;
+                    dataLogger.logGenericEvent("scheduler_preclean_deferred",
+                                               {{"reason", ok ? "busy" : "state_error", FIELD_STRING}});
+                    return;
+                }
+                serial.getCharger([this, cleanAt](bool chargerOk, const ChargerData& charger) {
+                    if (!chargerOk || !charger.extPwrPresent) {
+                        preCleanRestartPending = false;
+                        dataLogger.logGenericEvent(
+                                "scheduler_preclean_deferred",
+                                {{"reason", chargerOk ? "off_dock" : "charger_error", FIELD_STRING}});
+                        return;
+                    }
+                    serial.powerControl("restart", [this, cleanAt](bool restartOk) {
+                        preCleanRestartPending = false;
+                        if (!restartOk) {
+                            dataLogger.logGenericEvent("scheduler_preclean_failed", {});
+                            return;
+                        }
+                        preparedCleanAt = cleanAt;
+                        dataLogger.logGenericEvent("scheduler_preclean_restart",
+                                                   {{"cleanAt", String(static_cast<long>(cleanAt)), FIELD_INT}});
+                        // Robot command was accepted; now explicitly reboot
+                        // the bridge too. Both have ten minutes to recover.
+                        system.restart();
+                    });
+                });
+            });
+            return true;
+        }
+    }
+    return false;
+}
 
 Scheduler::Scheduler(SettingsManager& settings, SystemManager& system, NeatoSerial& serial, DataLogger& logger,
                      Preferences& prefs) :
@@ -89,6 +163,12 @@ void Scheduler::resetFiredGuards(int day) {
 }
 
 bool Scheduler::isRobotIdle(const RobotState& state) const {
+    // Upstream's idle-state fix: some robots leave the UI in STARTCLEANING
+    // after docking, while their actual state correctly reports standby.
+    if (state.robotState.length() > 0) {
+        return state.robotState == "ST_C_Standby" || state.robotState == "ST_C_Idle" ||
+               state.robotState == "ST_M2_Charging_StdBy";
+    }
     return state.uiState == "UIMGR_STATE_IDLE" || state.uiState == "UIMGR_STATE_STANDBY";
 }
 
@@ -130,7 +210,14 @@ bool Scheduler::handleScheduledCleaning(const Settings& s, int day, int nowMins)
             return true;
         }
 
-        bool restartFirst = s.restartBeforeClean;
+        struct tm scheduled;
+        time_t clock = system.now();
+        localtime_r(&clock, &scheduled);
+        scheduled.tm_hour = slot.hour;
+        scheduled.tm_min = slot.minute;
+        scheduled.tm_sec = 0;
+        scheduled.tm_isdst = -1;
+        bool restartFirst = s.restartBeforeClean && preparedCleanAt != mktime(&scheduled);
         // Claim before the asynchronous state read so the next scheduler tick
         // cannot enqueue the same cleaning slot again while the UART is busy.
         firedSlots[si] = schedMins;
@@ -292,6 +379,9 @@ void Scheduler::tick() {
     time_t t = system.now();
     if (t <= 1700000000)
         return; // Clock not set yet
+
+    if (handlePreCleanRestart(s, t))
+        return;
 
     struct tm tm;
     localtime_r(&t, &tm);

@@ -4,7 +4,7 @@ from homeassistant.components.vacuum import VacuumActivity
 
 DOMAIN = "openneato"
 CONF_HOST = "host"
-DEFAULT_POLL_INTERVAL = 5  # seconds
+DEFAULT_POLL_INTERVAL = 15  # active monitoring; idle sleeps until the saved schedule
 EVENT_NOGO_NEAR = f"{DOMAIN}_nogo_near"
 EVENT_NOGO_BREACHED = f"{DOMAIN}_nogo_breached"
 

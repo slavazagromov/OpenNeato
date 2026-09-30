@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from asyncio import Task, ensure_future
+from asyncio import Semaphore, Task, ensure_future
 from typing import Any
 
 import aiohttp
@@ -50,6 +50,7 @@ class OpenNeatoApiClient:
         """Initialize the API client."""
         self._host = host.rstrip("/")
         self._session = session
+        self._request_slots = Semaphore(2)
         self._base_url = f"http://{self._host}"
         # Coalesces concurrent get_history_session() calls for the same
         # filename into a single in-flight request. Both camera entities
@@ -80,7 +81,7 @@ class OpenNeatoApiClient:
         url = f"{self._base_url}{path}"
         _LOGGER.debug("GET %s", url)
         try:
-            async with timeout(TIMEOUT):
+            async with self._request_slots, timeout(TIMEOUT):
                 async with self._session.get(url) as response:
                     _LOGGER.debug(
                         "GET %s -> %s (%s)",
@@ -113,7 +114,7 @@ class OpenNeatoApiClient:
         url = f"{self._base_url}{path}"
         _LOGGER.debug("POST %s params=%s", url, params)
         try:
-            async with timeout(TIMEOUT):
+            async with self._request_slots, timeout(TIMEOUT):
                 async with self._session.post(url, params=params) as response:
                     _LOGGER.debug(
                         "POST %s -> %s (%s)",
@@ -155,7 +156,7 @@ class OpenNeatoApiClient:
         url = f"{self._base_url}/api/history/{filename}"
         _LOGGER.debug("DELETE %s", url)
         try:
-            async with timeout(TIMEOUT):
+            async with self._request_slots, timeout(TIMEOUT):
                 async with self._session.delete(url) as response:
                     _LOGGER.debug("DELETE %s -> %s", url, response.status)
                     response.raise_for_status()
@@ -181,7 +182,7 @@ class OpenNeatoApiClient:
         url = f"{self._base_url}{path}"
         _LOGGER.debug("PUT %s body=%s", url, json_data)
         try:
-            async with timeout(TIMEOUT):
+            async with self._request_slots, timeout(TIMEOUT):
                 async with self._session.put(url, json=json_data) as response:
                     _LOGGER.debug(
                         "PUT %s -> %s (%s)",
@@ -317,7 +318,7 @@ class OpenNeatoApiClient:
         url = f"{self._base_url}/api/history/{filename}"
         _LOGGER.debug("GET %s", url)
         try:
-            async with timeout(TIMEOUT):
+            async with self._request_slots, timeout(TIMEOUT):
                 async with self._session.get(url) as response:
                     response.raise_for_status()
                     # The firmware serves this endpoint as an HTTP chunked

@@ -243,8 +243,11 @@ mistaking one avoidance maneuver for a stopped and newly started cleaning run.
 4. **Settings → Devices & Services → Add Integration → OpenNeato** and enter the bridge hostname or IP
    (e.g. `neato.local` or `192.168.1.42`).
 
-The integration polls `/api/*` over your LAN every 5 seconds (`local_polling`). No cloud round-trip, no
-external dependencies. Requires firmware `1.0+`; battery diagnostics need firmware `0.13+` (upstream PR #121).
+The integration sleeps while idle and wakes ten minutes before the next locally saved cleaning slot.
+During cleaning it polls status every 15 seconds; live LIDAR sampling retains its existing cadence.
+At most two HTTP requests per robot are in flight, including map downloads. Commands and settings changes
+wake monitoring immediately. A clean started outside HA or the saved schedule needs an explicit HA refresh.
+No cloud round-trip or external dependencies. Requires firmware `1.0+`; battery diagnostics need firmware `0.13+` (upstream PR #121).
 
 ### What you get
 
@@ -447,3 +450,22 @@ Prereleases can be triggered from any PR by commenting `/prerelease` (collaborat
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+The replay card has a **Check status** button for a one-time status refresh, including when the robot
+was last unavailable. It updates the normal HA entities and shows when the check finished. A matching
+HA button entity is available for dashboards and automations. Idle monitoring remains asleep.
+
+## Pre-clean restart
+
+Enable **Restart robot and bridge before cleaning** in Home Assistant to use the ESP32-managed
+cleaning schedule. With this firmware, the Neato restarts first and the ESP32 then explicitly restarts
+ten minutes before each enabled slot. It only attempts this while the robot is idle and on external
+power; a skipped cleaning slot also skips its pre-clean restart. No evening restart is configured.
+The scheduled cleaning time stays unchanged. If the advance restart was missed, the existing
+restart-at-clean-time fallback remains. Soft-restart tracking prevents repeating the advance restart.
+A cold-boot grace period prevents repeated restarts if the Neato cuts ESP32 power during its reboot.
+
+This requires the updated firmware: older firmware only restarts the Neato at the cleaning time.
+Both schedule execution and advance restarts run on the ESP32 independently of HA or Wi-Fi. A frozen
+network can therefore recover while the main loop still runs; a completely stalled board still relies
+on its existing hardware watchdog.

@@ -65,6 +65,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = async_get_clientsession(hass)
     api = OpenNeatoApiClient(host, session)
 
+    serial = entry.data.get("serial", "unknown")
+    model = entry.data.get("model")
+    sw_version = entry.data.get("software_version")
+    fw_version = entry.data.get("firmware_version")
+
     _LOGGER.debug("Connecting to OpenNeato at %s", host)
 
     try:
@@ -91,12 +96,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         fw_version = firmware_info.get("version") or fw_version
 
-    # The coordinator is the actual health gate. It polls state, charger and
-    # system concurrently and only fails setup when ALL three critical
-    # endpoints fail. A single flaky endpoint therefore cannot make the vacuum
-    # unavailable.
+    # Load the integration even when the bridge is offline. This keeps the
+    # manual Check status button and replay history available so the user can
+    # retry a dead robot; entities remain unavailable until a refresh succeeds.
     coordinator = OpenNeatoCoordinator(hass, api, serial)
-    await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_refresh()
 
     hass.data.setdefault(DOMAIN, {})
     await _async_register_frontend(hass)

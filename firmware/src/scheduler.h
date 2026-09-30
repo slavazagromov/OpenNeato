@@ -49,6 +49,7 @@ private:
     unsigned long restartIssuedAt = 0;
     bool skipNextClean = false;
     bool skipNextCleanLoaded = false;
+    bool preCleanRestartPending = false;
 
     // Convert C library tm_wday (Sun=0..Sat=6) to our index (Mon=0..Sun=6)
     static int toSchedDay(int tmWday);
@@ -56,6 +57,7 @@ private:
     bool isRobotIdle(const RobotState& state) const;
     bool handleScheduledCleaning(const Settings& s, int day, int nowMins);
     void handleAutoRestart(const Settings& s, int day, int nowMins);
+    bool handlePreCleanRestart(const Settings& s, time_t now);
     void handlePendingCleanAfterRestart();
     void clearPendingCleanAfterRestart();
     void triggerClean(int day, int slotIndex);
